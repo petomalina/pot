@@ -1,9 +1,13 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,15 +16,17 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/iterator"
 )
 
 var (
-	bucketName = flag.String("bucket", "", "bucket name")
+	bucketNameFlag = flag.String("bucket", "", "bucket name")
+	zipFlag        = flag.String("zip", "", "zip is the path where the zip file is stored")
 )
 
 func main() {
 	flag.Parse()
-	if *bucketName == "" {
+	if *bucketNameFlag == "" {
 		slog.Error("-bucket=<name> is required, but missing")
 		os.Exit(1)
 	}
@@ -34,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	bucket := gcs.Bucket(*bucketName)
+	bucket := gcs.Bucket(*bucketNameFlag)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -46,6 +52,10 @@ func main() {
 			remove(w, r, bucket)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+
+		if *zipFlag != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
+			zip(w, r, bucket)
 		}
 	})
 
@@ -184,6 +194,59 @@ func remove(w http.ResponseWriter, r *http.Request, bucket *storage.BucketHandle
 	writer := pot.NewWriter(r.Context())
 	defer writer.Close()
 	if err := json.NewEncoder(writer).Encode(content); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// zip creates a zip file from the whole pot provided by the zip flag.
+// It creates a pot.tar.gz file on the zip path.
+func zip(w http.ResponseWriter, r *http.Request, bucket *storage.BucketHandle) {
+	var buf strings.Builder
+	gzw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gzw)
+
+	objList := bucket.Objects(r.Context(), &storage.Query{})
+	for {
+		obj, err := objList.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		objReader, err := bucket.Object(obj.Name).NewReader(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		defer objReader.Close()
+
+		hdr := &tar.Header{
+			Name: obj.Name,
+			Size: obj.Size,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		if _, err := io.Copy(tw, objReader); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	if err := gzw.Close(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	dst := bucket.Object(path.Join(*zipFlag, "pot.tar.gz"))
+	writer := dst.NewWriter(r.Context())
+	defer writer.Close()
+
+	if _, err := io.Copy(writer, strings.NewReader(buf.String())); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
