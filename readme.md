@@ -56,3 +56,17 @@ This example deletes the document with key `John Doe` at the path `users`:
 ```bash
 $ curl -X DELETE localhost:8080/users?key=John%20Doe
 ```
+
+## Advanced Features - Zipping the content
+
+Certain tools like [Open Policy Agent require the data to be zipped](https://www.openpolicyagent.org/docs/latest/management-bundles/#bundle-build) before they can be shipped. Pot supports zipping the content by setting the `zip` flag and providing the path to the zip file in it:
+
+```bash
+$ pot -bucket <bucket-name> -zip <zip-path>
+
+# e.g. if you want to store the data in the bucket root in a file called bundle.zip:
+$ pot -bucket <bucket-name> -zip .
+
+# or if you want to store it in a subdirectory called bundle:
+$ pot -bucket <bucket-name> -zip ./bundle
+```
