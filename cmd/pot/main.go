@@ -92,7 +92,7 @@ func main() {
 }
 
 func potPath(urlPath string) string {
-	return strings.TrimPrefix(path.Join(urlPath, "pot.json"), "/")
+	return strings.TrimPrefix(path.Join(urlPath, "data.json"), "/")
 }
 
 // get returns the content of the object if it exists, otherwise an empty object
