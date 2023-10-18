@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"sync"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -22,6 +23,9 @@ import (
 var (
 	bucketNameFlag = flag.String("bucket", "", "bucket name")
 	zipFlag        = flag.String("zip", "", "zip is the path where the zip file is stored")
+
+	// rwlock is used to synchronize access to the pot files
+	rwlock = sync.RWMutex{}
 )
 
 func main() {
@@ -45,17 +49,28 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			rwlock.RLock()
 			get(w, r, bucket)
+			rwlock.RUnlock()
+
 		case http.MethodPost:
+			rwlock.Lock()
 			create(w, r, bucket)
+			rwlock.Unlock()
+
 		case http.MethodDelete:
+			rwlock.Lock()
 			remove(w, r, bucket)
+			rwlock.Unlock()
+
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 
 		if *zipFlag != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
+			rwlock.Lock()
 			zip(w, r, bucket)
+			rwlock.Unlock()
 		}
 	})
 
