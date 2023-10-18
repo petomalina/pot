@@ -10,8 +10,10 @@ To run Pot, you need to have a Google Cloud Storage bucket. You can create one [
 Pot requires only single flag to run:
 
 ```bash
-pot -bucket <bucket-name>
+$ pot -bucket <bucket-name>
 ```
+
+Pot runs by default on port `8080` and doesn't respect any other opinions on port selection. It is intended to be ran in a serverless environment or an environment that supports port forwarding.
 
 ## Using Pot
 
