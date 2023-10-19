@@ -76,7 +76,7 @@ $ pot -bucket <bucket-name> -zip ./bundle
 If you wish to embed Pot instead of using it as a binary, you can embed the library in your Go code by first installing the package:
   
 ```bash
-$ go get github.com/petomalina/po
+$ go get github.com/petomalina/pot
 ```
 
 Once the library is installed, you can import it and use the `NewClient` function to bootstrap the entry point to the library:
