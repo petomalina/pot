@@ -164,6 +164,11 @@ func (c *Client) Zip(ctx context.Context, dir string) error {
 			return err
 		}
 
+		// ignore objects that are in the directory where the zip is stored
+		if strings.HasPrefix(obj.Name, dir) {
+			continue
+		}
+
 		objReader, err := c.bucket.Object(obj.Name).NewReader(ctx)
 		if err != nil {
 			return err

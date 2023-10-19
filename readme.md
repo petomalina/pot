@@ -102,5 +102,8 @@ func main() {
 
   // pot.Delete will delete the document at the path `path/to/dir` with the key `John Doe`
   err = pot.Delete(ctx, "path/to/dir", "John Doe")
+
+  // pot.Zip will take contents of the whole bucket and zip them into a file at the given path
+  err = pot.Zip(ctx, "path/to/bundle")
 }
 ```
