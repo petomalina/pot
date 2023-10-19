@@ -70,3 +70,37 @@ $ pot -bucket <bucket-name> -zip .
 # or if you want to store it in a subdirectory called bundle:
 $ pot -bucket <bucket-name> -zip ./bundle
 ```
+
+## Advanced Features - Using Pot as a Go Library
+
+If you wish to embed Pot instead of using it as a binary, you can embed the library in your Go code by first installing the package:
+  
+```bash
+$ go get github.com/petomalina/po
+```
+
+Once the library is installed, you can import it and use the `NewClient` function to bootstrap the entry point to the library:
+
+```go
+package main
+
+import (
+  "context"
+
+  "github.com/petomalina/pot"
+)
+
+func main() {
+  ctx := context.Background()
+  pot, err := pot.NewClient(context.Background(), "my-bucket")
+
+  // pot.Create will create a document at the path `path/to/dir` with the key `John Doe`
+  err = pot.Create(ctx, "path/to/dir", strings.NewReader("{\"name\": \"John Doe\", \"age\": 42}"))
+
+  // pot.Get will return all documents at the path `path/to/dir` as a map[string]interface{}
+  content, err = pot.Get(ctx, "path/to/dir")
+
+  // pot.Delete will delete the document at the path `path/to/dir` with the key `John Doe`
+  err = pot.Delete(ctx, "path/to/dir", "John Doe")
+}
+```
