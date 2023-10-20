@@ -45,7 +45,7 @@ func main() {
 			err = potClient.Create(r.Context(), r.URL.Path, r.Body)
 
 		case http.MethodDelete:
-			err = potClient.Remove(r.Context(), r.URL.Path, r.URL.Query().Get("key"))
+			err = potClient.Remove(r.Context(), r.URL.Path, r.URL.Query()["key"]...)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

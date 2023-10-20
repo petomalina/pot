@@ -111,7 +111,8 @@ func (c *Client) Get(ctx context.Context, dir string) (map[string]interface{}, e
 	return content, nil
 }
 
-func (c *Client) Remove(ctx context.Context, dir, key string) error {
+// Remove removes the provided keys from the pot on the given directory path.
+func (c *Client) Remove(ctx context.Context, dir string, keys ...string) error {
 	c.rwlock.Lock()
 	defer c.rwlock.Unlock()
 
@@ -134,7 +135,9 @@ func (c *Client) Remove(ctx context.Context, dir, key string) error {
 	}
 
 	// delete the object from the content
-	delete(content, key)
+	for _, key := range keys {
+		delete(content, key)
+	}
 
 	// encode the content to the pot
 	writer := pot.NewWriter(ctx)
