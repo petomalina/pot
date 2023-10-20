@@ -1,7 +1,7 @@
 # 🍲 Pot
 
 Pot is an incredibly simple and lightweight implementation of a database based on the Cloud Storage.
-It let's you store, read, and delete any kind of data in your bucket.
+It let's you store, read, and delete any kind of structured data in your bucket.
 
 ## Running Pot
 
@@ -14,6 +14,20 @@ $ pot -bucket <bucket-name>
 ```
 
 Pot runs by default on port `8080` and doesn't respect any other opinions on port selection. It is intended to be ran in a serverless environment or an environment that supports port forwarding.
+
+## Data Model
+
+Pot stores data in a simple key-value store. The key must be a string and is always derived from the document that is being stored (either `id` or `name`). The value is always a JSON object. The structure of the file then looks like following:
+
+```json
+{
+	"John Doe": {
+		"age": "42",
+		"id": "John Doe"
+	},
+  ...
+}
+```
 
 ## Using Pot
 
