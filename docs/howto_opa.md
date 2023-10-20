@@ -9,7 +9,7 @@ This guide shows you how to integrate Pot with [Open Policy Agent](https://www.o
 To install Pot, use the following command:
 
 ```bash
-$ go install github.com/petomalina/pot@latest
+$ go install github.com/petomalina/pot/cmd/pot@latest
 ```
 
 You can install OPA easily via `brew` or follow the [official guide](https://www.openpolicyagent.org/docs/latest/#1-download-opa).
@@ -40,16 +40,58 @@ To create a Service Account, you can again check out the [official guide](https:
 
 ```bash
 $ gcloud iam service-accounts create <your-sa-name>
+
+# add required permissions
+$ gcloud storage buckets add-iam-policy-binding <bucket-name> --member serviceAccount:<your-sa-name>@<your-project>.iam.gserviceaccount.com --role roles/storage.objectUser
 ```
 
-## Local configuration of Open Policy Agent
+## Running Pot
 
-If you wish to test Open Policy Agent server locally, you can use the following configuration and make sure that you replace:
+Before you can run Pot, you will need to activate the service account you created in the previous step. You can do so by running:
+
+```bash
+$ gcloud auth activate-service-account <your-sa-name>@<your-project>.iam.gserviceaccount.com --key-file=<path-to-your-private-key>
+```
+
+Then you can run Pot with the following command and you should see this output:
+
+```bash
+$ pot -bucket <bucket-name>
+
+2023/10/20 16:37:32 INFO starting server on :8080
+```
+
+Lastly, we will test that Pot works correctly. We will store 2 documents on the path `landmarks`:
+  
+```bash
+$ curl -X POST -d '{"id": "sagrada-familia", "age": 141}' localhost:8080/landmarks
+$ curl -X POST -d '{"id": "eiffel-tower", "age": 136}' localhost:8080/landmarks
+```
+
+And then we will read the documents back:
+
+```bash
+$ curl localhost:8080/landmarks
+
+{
+  "eiffel-tower": {
+    "age": 136,
+    "id": "eiffel-tower"
+  },
+  "sagrada-familia": {
+    "age": 141,
+    "id": "sagrada-familia"
+  }
+}
+```
+
+## Running Open Policy Agent locally
+
+To run Open Policy Agent server locally, you can use the following configuration and make sure that you replace:
 - `<your-bucket-name>` with the name of the bucket you wish to use.
 - `<your-project>` with the name of your GCP project that hosts the service account.
 - `<your-sa-name>` with the name of the service account you wish to use (needs read access to the bucket).
 - `<your-sa-private-key>` with the private key of the service account provided. Follow the [official guide](https://cloud.google.com/iam/docs/keys-create-delete#creating) to create a new JSON key and copy-paste the private key from it.
-
 
 ```yaml
 # config.yaml
@@ -78,16 +120,43 @@ keys:
 bundles:
   authz:
     service: gcs
-    resource: 'bundle.tar.gz?alt=media'
+    resource: 'bundles%2Fbundle.tar.gz?alt=media'
     polling:
       min_delay_seconds: 3
       max_delay_seconds: 10
 ```
 
-## Running the Open Policy Agent server locally
-
 Then you can run the server with the following command:
 
 ```bash
 $ opa run --server --log-level info --config-file ./config.yaml
+```
+
+## Integrating Pot and OPA
+
+Now that we have both Pot and OPA running, we can integrate them together. We will be using the [bundle API](https://www.openpolicyagent.org/docs/latest/management/#bundles) to integrate the two. The bundle API allows us to upload a tarball with the data to OPA and then OPA will periodically download the tarball and update the data. This allows us to use Pot as a data source for OPA.
+
+To create the tarball automatically, we will restart the Pot server and provide the `-zip` flag, which creates tarballs on changes to the Pot bucket. The following command will store the tarball in the `bundles` directory:
+
+```bash
+$ pot -bucket <bucket-name> -zip bundles
+```
+
+Since OPA evaluates policies based on the data we give it, we will need to create a simple policy. The policy will check whether the user is right about the age of the landmark. The policy is stored in the `policies` directory:
+
+```rego
+# policies/landmarks.rego
+package landmarks
+
+default allow = false
+
+allow {
+  input.age == data.landmarks[input.id].age
+}
+```
+
+Lastly, we will upload this policy to the same bucket on the path `policies/landmarks.rego`:
+
+```bash
+$ gsutil cp policies/landmarks.rego gs://<bucket-name>/policies/landmarks.rego
 ```
