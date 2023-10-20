@@ -1,11 +1,15 @@
 # 🍲 Pot
 
-Pot is an incredibly simple and lightweight implementation of a database based on the Cloud Storage.
+Pot is an incredibly simple and lightweight implementation of a database based on the [Cloud Storage](https://cloud.google.com/storage).
 It let's you store, read, and delete any kind of structured data in your bucket.
 
 ## Running Pot
 
-To run Pot, you need to have a Google Cloud Storage bucket. You can create one [here](https://console.cloud.google.com/storage/create-bucket). Pot then uses the local credentials to access the bucket. You can find more information about the credentials [here](https://cloud.google.com/docs/authentication/getting-started).
+To run Pot, you need to have a Google Cloud Storage bucket. You can create one [here](https://console.cloud.google.com/storage/create-bucket). Pot then uses the local credentials to access the bucket. You can find more information about the credentials [here](https://cloud.google.com/docs/authentication/getting-started). Install pot using the golang toolchain:
+
+```bash
+$ go install github.com/petomalina/pot@latest
+```
 
 Pot requires only single flag to run:
 
@@ -21,10 +25,10 @@ Pot stores data in a simple key-value store. The key must be a string and is alw
 
 ```json
 {
-	"John Doe": {
-		"age": "42",
-		"id": "John Doe"
-	},
+  "John Doe": {
+    "age": "42",
+    "id": "John Doe"
+  },
   ...
 }
 ```
