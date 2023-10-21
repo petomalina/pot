@@ -22,7 +22,10 @@ import (
 type Client struct {
 	bucket *storage.BucketHandle
 
-	rwlock sync.RWMutex
+	// pathLocks is a map of paths and their dedicated locks. This is used to prevent
+	// multiple processes from writing to the same path at the same time or unnecessarily
+	// colliding during distributed lock acquisition.
+	pathLocks map[string]*sync.RWMutex
 
 	// DistributedLock indicates whether the client should use distributed locking
 	// to prevent multiple processes from writing to the same path at the same time.
@@ -38,7 +41,8 @@ func NewClient(ctx context.Context, bucketName string, opts ...Option) (*Client,
 	}
 
 	c := &Client{
-		bucket: gcs.Bucket(bucketName),
+		bucket:    gcs.Bucket(bucketName),
+		pathLocks: map[string]*sync.RWMutex{},
 	}
 
 	for _, opt := range opts {
@@ -69,19 +73,19 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "create"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "create"))
 
-	c.rwlock.Lock()
-	defer c.rwlock.Unlock()
+	c.localLock(dir).Lock()
+	defer c.localLock(dir).Unlock()
 
 	if c.distributedLock {
 		slog.Debug("acquiring distributed lock", slog.String("dir", dir), slog.String("method", "create"))
 		defer slog.Debug("removing distributed lock", slog.String("dir", dir), slog.String("method", "create"))
 
-		id, err := c.lockPath(ctx, dir)
+		id, err := c.lockSharedPath(ctx, dir)
 		if err != nil {
 			return err
 		}
 		defer func(id string) {
-			err := c.unlockPath(ctx, dir, id)
+			err := c.unlockSharedPath(ctx, dir, id)
 			if err != nil {
 				slog.Error("failed to unlock path", slog.String("dir", dir), slog.String("method", "create"), slog.String("error", err.Error()))
 			}
@@ -137,8 +141,8 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
 }
 
 func (c *Client) Get(ctx context.Context, dir string) (map[string]interface{}, error) {
-	c.rwlock.RLock()
-	defer c.rwlock.RUnlock()
+	c.localLock(dir).RLock()
+	defer c.localLock(dir).RUnlock()
 
 	content := map[string]interface{}{}
 	pot := c.bucket.Object(c.potPath(dir))
@@ -166,19 +170,19 @@ func (c *Client) Remove(ctx context.Context, dir string, keys ...string) error {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "remove"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "remove"))
 
-	c.rwlock.Lock()
-	defer c.rwlock.Unlock()
+	c.localLock(dir).Lock()
+	defer c.localLock(dir).Unlock()
 
 	if c.distributedLock {
 		slog.Debug("acquiring distributed lock", slog.String("dir", dir), slog.String("method", "remove"))
 		defer slog.Debug("removing distributed lock", slog.String("dir", dir), slog.String("method", "remove"))
 
-		id, err := c.lockPath(ctx, dir)
+		id, err := c.lockSharedPath(ctx, dir)
 		if err != nil {
 			return err
 		}
 		defer func(id string) {
-			err := c.unlockPath(ctx, dir, id)
+			err := c.unlockSharedPath(ctx, dir, id)
 			if err != nil {
 				slog.Error("failed to unlock path", slog.String("dir", dir), slog.String("method", "remove"), slog.String("error", err.Error()))
 			}
@@ -221,8 +225,8 @@ func (c *Client) Remove(ctx context.Context, dir string, keys ...string) error {
 }
 
 func (c *Client) Zip(ctx context.Context, dir string) error {
-	c.rwlock.Lock()
-	defer c.rwlock.Unlock()
+	c.localLock(dir).Lock()
+	defer c.localLock(dir).Unlock()
 
 	var buf strings.Builder
 	gzw := gzip.NewWriter(&buf)
@@ -286,14 +290,25 @@ func (c *Client) Zip(ctx context.Context, dir string) error {
 	return nil
 }
 
-// lockPath creates a .potlock file on the given path to prevent other processes
+// localLock returns the lock for the given path. If the lock doesn't exist, it
+// will be created and returned.
+func (c *Client) localLock(dir string) *sync.RWMutex {
+	lock, ok := c.pathLocks[dir]
+	if ok {
+		return lock
+	}
+	c.pathLocks[dir] = &sync.RWMutex{}
+	return c.pathLocks[dir]
+}
+
+// lockSharedPath creates a .potlock file on the given path to prevent other processes
 // from modifying the pot.
 //
 // The process is as following:
 // 1. try to create the .potlock file if it doesn't exist
 // 2. if the file succeeds to create, the path is locked by this process
 // 3. if the file fails to create on the precondition, the path is locked by another process
-func (c *Client) lockPath(ctx context.Context, dir string) (string, error) {
+func (c *Client) lockSharedPath(ctx context.Context, dir string) (string, error) {
 	lock := c.bucket.Object(path.Join(dir, ".potlock"))
 
 	tstamp := strconv.Itoa(int(time.Now().Unix()))
@@ -314,8 +329,8 @@ func (c *Client) lockPath(ctx context.Context, dir string) (string, error) {
 	return strconv.FormatInt(w.Attrs().Generation, 10), nil
 }
 
-// unlockPath removes the .potlock file from the given path.
-func (c *Client) unlockPath(ctx context.Context, dir, id string) error {
+// unlockSharedPath removes the .potlock file from the given path.
+func (c *Client) unlockSharedPath(ctx context.Context, dir, id string) error {
 	gen, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return err
