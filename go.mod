@@ -2,6 +2,8 @@ module github.com/petomalina/pot
 
 go 1.21.3
 
+require golang.org/x/exp v0.0.0-20231006140011-7918f672742d
+
 require (
 	cloud.google.com/go v0.110.4 // indirect
 	cloud.google.com/go/compute v1.20.1 // indirect
@@ -19,7 +21,7 @@ require (
 	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/net v0.12.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.132.0 // indirect
