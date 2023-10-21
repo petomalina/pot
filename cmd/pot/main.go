@@ -8,17 +8,31 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/petomalina/pot"
 )
 
 var (
-	bucketNameFlag = flag.String("bucket", "", "bucket name")
-	zipFlag        = flag.String("zip", "", "zip is the path where the zip file is stored")
+	logLevelFlag        = flag.String("log-level", "info", "debug | info | warn | error")
+	bucketNameFlag      = flag.String("bucket", "", "bucket name")
+	zipFlag             = flag.String("zip", "", "zip is the path where the zip file is stored")
+	distributedLockFlag = flag.Bool("distributed-lock", false, "distributed-lock enables distributed locking of the pot")
 )
 
 func main() {
 	flag.Parse()
+
+	loglevel := new(slog.Level)
+	err := loglevel.UnmarshalText([]byte(*logLevelFlag))
+	if err != nil {
+		slog.Error("failed to parse log level: %v", err)
+		os.Exit(1)
+	}
+
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: *loglevel})
+	slog.SetDefault(slog.New(h))
+
 	if *bucketNameFlag == "" {
 		slog.Error("-bucket=<name> is required, but missing")
 		os.Exit(1)
@@ -27,7 +41,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	potClient, err := pot.NewClient(ctx, *bucketNameFlag)
+	opts := []pot.Option{}
+	if *distributedLockFlag {
+		slog.Debug("distributed lock enabled")
+		opts = append(opts, pot.WithDistributedLock())
+	}
+
+	potClient, err := pot.NewClient(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)
@@ -37,15 +57,18 @@ func main() {
 		var err error
 		content := map[string]interface{}{}
 
+		// trim the leading slash as bucket paths are relative
+		relPath := strings.TrimPrefix(r.URL.Path, "/")
+
 		switch r.Method {
 		case http.MethodGet:
-			content, err = potClient.Get(r.Context(), r.URL.Path)
+			content, err = potClient.Get(r.Context(), relPath)
 
 		case http.MethodPost:
-			err = potClient.Create(r.Context(), r.URL.Path, r.Body)
+			err = potClient.Create(r.Context(), relPath, r.Body)
 
 		case http.MethodDelete:
-			err = potClient.Remove(r.Context(), r.URL.Path, r.URL.Query()["key"]...)
+			err = potClient.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
