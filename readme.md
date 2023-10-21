@@ -125,3 +125,17 @@ func main() {
   err = pot.Zip(ctx, "path/to/bundle")
 }
 ```
+
+## Advanced Features - Using Distributed Lock
+
+In scenarios where you aim to run Pot as a highly-available service, you will need to use the distributed locking mechanism to ensure that only one Pot instance can write to the bucket path at a time. Pot uses [Cloud Storage's Object Generation](https://cloud.google.com/storage/docs/generations-preconditions) to implement the locking mechanism. This doubles the latency of each request, but ensures that only one instance can write to the bucket path at a time.
+
+> :warn: Pot uses local mutexes to queue the requests. If more instances happen to be acquiring the distributed lock, the second instance will receive a `412 Precondition Failed` errors. For this reason, it is recommended to run Pot with a single main instance with backup instances only in case of a failure.
+
+To use the distributed lock, you need to set the `-distributed-lock` when starting Pot:
+
+```bash
+$ pot -bucket <bucket-name> -distributed-lock
+```
+
+You can now use Pot as usual, 
