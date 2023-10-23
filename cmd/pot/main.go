@@ -60,12 +60,18 @@ func main() {
 		// trim the leading slash as bucket paths are relative
 		relPath := strings.TrimPrefix(r.URL.Path, "/")
 
+		callOpts := []pot.CallOpt{}
+		slog.Info("query", slog.String("method", r.Method), slog.Any("query", r.URL.Query()))
+		if r.URL.Query().Has("batch") {
+			callOpts = append(callOpts, pot.WithBatch())
+		}
+
 		switch r.Method {
 		case http.MethodGet:
 			content, err = potClient.Get(r.Context(), relPath)
 
 		case http.MethodPost:
-			err = potClient.Create(r.Context(), relPath, r.Body)
+			err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
 
 		case http.MethodDelete:
 			err = potClient.Remove(r.Context(), relPath, r.URL.Query()["key"]...)

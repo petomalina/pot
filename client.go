@@ -69,9 +69,30 @@ func (c *Client) potPath(urlPath string) string {
 	return path.Join(urlPath, "data.json")
 }
 
-func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
+// CallOpts is a set of options that can be passed to the client methods.
+type CallOpts struct {
+	batch bool
+}
+
+// CallOpt is a functional option for the client methods. It allows to
+// configure the client methods.
+type CallOpt func(*CallOpts)
+
+// WithBatch enables batch requests on the client methods.
+func WithBatch() CallOpt {
+	return func(o *CallOpts) {
+		o.batch = true
+	}
+}
+
+func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) error {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "create"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "create"))
+
+	opts := &CallOpts{}
+	for _, opt := range callOpts {
+		opt(opts)
+	}
 
 	c.localLock(dir).Lock()
 	defer c.localLock(dir).Unlock()
@@ -92,7 +113,7 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
 		}(id)
 	}
 
-	content := map[string]interface{}{}
+	content := map[string]any{}
 	pot := c.bucket.Object(c.potPath(dir))
 
 	reader, err := pot.NewReader(ctx)
@@ -110,23 +131,36 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
 		}
 	}
 
-	// decode the new object so it can be added to the content
-	obj := map[string]interface{}{}
-	if err := json.NewDecoder(r).Decode(&obj); err != nil {
-		return err
-	}
+	// if the batch option is set, decode the content as a batch request
+	if opts.batch {
+		objs, err := decodeBatchContent(r)
+		if err != nil {
+			return err
+		}
 
-	// check whether either "id" or "name" is set and use the value as key
-	var key string
-	if name, ok := obj["name"]; ok {
-		key = name.(string)
-	}
-	if id, ok := obj["id"]; ok {
-		key = id.(string)
-	}
+		for k, v := range objs {
+			content[k] = v
+		}
 
-	// add the new object to the content
-	content[key] = obj
+	} else {
+		// decode the new object so it can be added to the content
+		obj := map[string]any{}
+		if err := json.NewDecoder(r).Decode(&obj); err != nil {
+			return err
+		}
+
+		// check whether either "id" or "name" is set and use the value as key
+		var key string
+		if name, ok := obj["name"]; ok {
+			key = name.(string)
+		}
+		if id, ok := obj["id"]; ok {
+			key = id.(string)
+		}
+
+		// add the new object to the content
+		content[key] = obj
+	}
 
 	// encode the content to the pot
 	writer := pot.NewWriter(ctx)
@@ -138,6 +172,22 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader) error {
 	slog.Info("updated pot", slog.String("dir", dir), slog.String("method", "create"))
 
 	return nil
+}
+
+// decodeBatchContent decodes the content of a batch request. The batch request
+// is a 2-level map instead of a single-level map like with non-batch requests.
+func decodeBatchContent(r io.Reader) (map[string]any, error) {
+	batch := map[string]map[string]any{}
+	if err := json.NewDecoder(r).Decode(&batch); err != nil {
+		return nil, err
+	}
+
+	content := map[string]any{}
+	for k, obj := range batch {
+		content[k] = obj
+	}
+
+	return content, nil
 }
 
 func (c *Client) Get(ctx context.Context, dir string) (map[string]interface{}, error) {
