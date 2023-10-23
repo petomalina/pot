@@ -35,7 +35,7 @@ func TestFlow(t *testing.T) {
 	}
 
 	// cleanup before the test
-	bucket := gcs.Bucket("peto-pot")
+	bucket := gcs.Bucket("petomalina-pot-tests")
 	objs := bucket.Objects(context.Background(), &storage.Query{Prefix: testPath})
 	for {
 		obj, err := objs.Next()

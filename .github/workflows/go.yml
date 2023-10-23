@@ -10,11 +10,16 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        credentials_json: '${{ secrets.GOOGLE_SERVICE_ACCOUNT }}'
 
     - name: Set up Go
       uses: actions/setup-go@v4
@@ -22,7 +27,11 @@ jobs:
         go-version: '1.21'
 
     - name: Build
-      run: go build -v ./...
+      run: |
+        go build -o main -v ./cmd/pot
 
     - name: Test
-      run: go test -v ./...
+      run: |
+        ./main -bucket petomalina-pot-tests &
+        sleep 3 &&
+        go test -v ./...
