@@ -62,7 +62,7 @@ func main() {
 
 		callOpts := []pot.CallOpt{}
 		slog.Info("query", slog.String("method", r.Method), slog.Any("query", r.URL.Query()))
-		if r.URL.Query().Get("batch") == "true" {
+		if r.URL.Query().Has("batch") {
 			callOpts = append(callOpts, pot.WithBatch())
 		}
 
