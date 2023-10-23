@@ -34,4 +34,9 @@ jobs:
       run: |
         ./main -bucket petomalina-pot-tests &
         sleep 3 &&
-        go test -v ./...
+        go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
