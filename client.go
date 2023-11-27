@@ -76,8 +76,9 @@ func (c *Client) potPath(urlPath string) string {
 
 // CallOpts is a set of options that can be passed to the client methods.
 type CallOpts struct {
-	batch     bool
-	norewrite bool
+	batch             bool
+	norewrite         bool
+	norewriteDuration time.Duration
 }
 
 // CallOpt is a functional option for the client methods. It allows to
@@ -93,9 +94,10 @@ func WithBatch() CallOpt {
 
 // WithNoRewrite disables rewriting of keys that already exist in data.
 // This option makes the whole request fail if any of the keys already exist.
-func WithNoRewrite() CallOpt {
+func WithNoRewrite(deadline time.Duration) CallOpt {
 	return func(o *CallOpts) {
 		o.norewrite = true
+		o.norewriteDuration = deadline
 	}
 }
 
@@ -172,8 +174,19 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		objs[key] = obj
 	}
 
+	// check whether the no-rewrite rule contains duration and if so, check whether
+	// the duration has passed since the last modification of the pot
+	norewriteDurationPassed := true
+	if opts.norewrite && opts.norewriteDuration > 0 && reader != nil {
+		lastMod := reader.Attrs.LastModified
+
+		if lastMod.Add(opts.norewriteDuration).Before(time.Now()) {
+			norewriteDurationPassed = false
+		}
+	}
+
 	for k, v := range objs {
-		if opts.norewrite {
+		if opts.norewrite && norewriteDurationPassed {
 			if _, ok := content[k]; ok {
 				return content, fmt.Errorf("%w: %s", ErrNoRewriteViolated, k)
 			}

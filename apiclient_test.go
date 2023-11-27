@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -159,7 +160,7 @@ func TestElection(t *testing.T) {
 				Age: i,
 			}
 
-			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite())
+			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite(0))
 			if err != nil {
 				errs <- err
 				return
@@ -199,5 +200,29 @@ func TestElection(t *testing.T) {
 
 	if content["test"].Age != ageIndex {
 		t.Fatalf("expected %v, got %v", ageIndex, content["test"].Age)
+	}
+}
+
+func TestNoRewriteDuration(t *testing.T) {
+	const testPath = "test/path"
+	cleanup(t, testPath)
+
+	client := newTestAPIClient()
+
+	err := client.Create(testPath, []testStruct{{ID: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = client.Create(testPath, []testStruct{{ID: "test2"}}, WithNoRewrite(time.Second*2))
+	if err != nil && !errors.Is(err, ErrNoRewriteViolated) {
+		t.Fatalf("expected no rewrite violation error, got %v", err)
+	}
+
+	time.Sleep(time.Second * 2)
+
+	err = client.Create(testPath, []testStruct{{ID: "test3"}})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

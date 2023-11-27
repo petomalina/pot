@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/petomalina/pot"
 )
@@ -67,7 +68,13 @@ func main() {
 		}
 
 		if r.URL.Query().Has("norewrite") {
-			callOpts = append(callOpts, pot.WithNoRewrite())
+			strDur := r.URL.Query().Get("norewrite")
+			dur, err := time.ParseDuration(strDur)
+			if err != nil {
+				dur = time.Duration(0)
+			}
+
+			callOpts = append(callOpts, pot.WithNoRewrite(dur))
 		}
 
 		switch r.Method {
