@@ -55,7 +55,12 @@ func (c *APIClient[T]) Get(urlPath string) (map[string]T, error) {
 }
 
 // Create calls the POST method on the Pot API server.
-func (c *APIClient[T]) Create(urlPath string, obj ...T) error {
+func (c *APIClient[T]) Create(urlPath string, obj []T, co ...CallOpt) error {
+	opts := &CallOpts{}
+	for _, opt := range co {
+		opt(opts)
+	}
+
 	content := map[string]T{}
 
 	for _, o := range obj {
@@ -73,6 +78,9 @@ func (c *APIClient[T]) Create(urlPath string, obj ...T) error {
 	}
 	q := req.URL.Query()
 	q.Set("batch", "true")
+	if opts.norewrite {
+		q.Set("norewrite", "true")
+	}
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := c.client.Do(req)
@@ -80,6 +88,10 @@ func (c *APIClient[T]) Create(urlPath string, obj ...T) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusLocked {
+		return ErrNoRewriteViolated
+	}
 
 	return nil
 }

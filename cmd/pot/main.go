@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -65,12 +66,19 @@ func main() {
 			callOpts = append(callOpts, pot.WithBatch())
 		}
 
+		if r.URL.Query().Has("norewrite") {
+			callOpts = append(callOpts, pot.WithNoRewrite())
+		}
+
 		switch r.Method {
 		case http.MethodGet:
 			content, err = potClient.Get(r.Context(), relPath)
 
 		case http.MethodPost:
-			err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
+			content, err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
+			if err == nil {
+				w.WriteHeader(http.StatusCreated)
+			}
 
 		case http.MethodDelete:
 			err = potClient.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
@@ -80,8 +88,13 @@ func main() {
 		}
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			// norewrite violation returns
+			if errors.Is(err, pot.ErrNoRewriteViolated) {
+				w.WriteHeader(http.StatusLocked)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// encode the content to the response

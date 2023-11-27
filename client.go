@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"path"
 	"strconv"
@@ -17,6 +18,10 @@ import (
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
+)
+
+var (
+	ErrNoRewriteViolated = errors.New("no-rewrite rule was violated")
 )
 
 type Client struct {
@@ -71,7 +76,8 @@ func (c *Client) potPath(urlPath string) string {
 
 // CallOpts is a set of options that can be passed to the client methods.
 type CallOpts struct {
-	batch bool
+	batch     bool
+	norewrite bool
 }
 
 // CallOpt is a functional option for the client methods. It allows to
@@ -85,7 +91,15 @@ func WithBatch() CallOpt {
 	}
 }
 
-func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) error {
+// WithNoRewrite disables rewriting of keys that already exist in data.
+// This option makes the whole request fail if any of the keys already exist.
+func WithNoRewrite() CallOpt {
+	return func(o *CallOpts) {
+		o.norewrite = true
+	}
+}
+
+func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) (map[string]interface{}, error) {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "create"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "create"))
 
@@ -103,7 +117,7 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 
 		id, err := c.lockSharedPath(ctx, dir)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer func(id string) {
 			err := c.unlockSharedPath(ctx, dir, id)
@@ -119,7 +133,7 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 	reader, err := pot.NewReader(ctx)
 	// return an error if an unexpected error occurred
 	if err != nil && err != storage.ErrObjectNotExist {
-		return err
+		return nil, err
 	}
 
 	// decode the content if the object exists, otherwise the content will be empty
@@ -127,26 +141,22 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		defer reader.Close()
 
 		if err := json.NewDecoder(reader).Decode(&content); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
+	objs := map[string]any{}
 	// if the batch option is set, decode the content as a batch request
 	if opts.batch {
-		objs, err := decodeBatchContent(r)
+		objs, err = decodeBatchContent(r)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
-		for k, v := range objs {
-			content[k] = v
-		}
-
 	} else {
 		// decode the new object so it can be added to the content
 		obj := map[string]any{}
 		if err := json.NewDecoder(r).Decode(&obj); err != nil {
-			return err
+			return nil, err
 		}
 
 		// check whether either "id" or "name" is set and use the value as key
@@ -159,19 +169,29 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		}
 
 		// add the new object to the content
-		content[key] = obj
+		objs[key] = obj
+	}
+
+	for k, v := range objs {
+		if opts.norewrite {
+			if _, ok := content[k]; ok {
+				return content, fmt.Errorf("%w: %s", ErrNoRewriteViolated, k)
+			}
+		}
+
+		content[k] = v
 	}
 
 	// encode the content to the pot
 	writer := pot.NewWriter(ctx)
 	defer writer.Close()
 	if err := json.NewEncoder(writer).Encode(content); err != nil {
-		return err
+		return nil, err
 	}
 
 	slog.Info("updated pot", slog.String("dir", dir), slog.String("method", "create"))
 
-	return nil
+	return content, nil
 }
 
 // decodeBatchContent decodes the content of a batch request. The batch request

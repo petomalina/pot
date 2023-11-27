@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 
 	"cloud.google.com/go/storage"
@@ -27,8 +29,9 @@ func newTestAPIClient() *APIClient[testStruct] {
 	return NewAPIClient[testStruct]("http://localhost:8080")
 }
 
-func TestFlow(t *testing.T) {
-	testPath := "test/path"
+func cleanup(t *testing.T, testPath string) {
+	t.Helper()
+
 	gcs, err := storage.NewClient(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +53,11 @@ func TestFlow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestFlow(t *testing.T) {
+	testPath := "test/path"
+	cleanup(t, testPath)
 
 	// run the test
 	client := newTestAPIClient()
@@ -78,7 +86,7 @@ func TestFlow(t *testing.T) {
 			{Name: "test2"},
 		},
 	}
-	err = client.Create(testPath, obj)
+	err = client.Create(testPath, []testStruct{obj})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,5 +129,75 @@ func TestFlow(t *testing.T) {
 
 	if len(content) != 0 {
 		t.Fatalf("expected no content, got %v", content)
+	}
+}
+
+func TestElection(t *testing.T) {
+	testPath := "test/path"
+	cleanup(t, testPath)
+
+	client := newTestAPIClient()
+
+	// Run 5 different "clients" that will try to create the same object.
+	// Only one of them should succeed, while all others should receive
+	// the http.StatusLocked error and the content of the first client.
+
+	errs := make(chan error, 100)
+	wg := sync.WaitGroup{}
+
+	mut := sync.Mutex{}
+	ageIndex := 0
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			obj := testStruct{
+				ID:  "test",
+				Age: i,
+			}
+
+			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite())
+			if err != nil {
+				errs <- err
+				return
+			}
+
+			mut.Lock()
+			ageIndex = i
+			mut.Unlock()
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	i := 0
+	for err := range errs {
+		if !errors.Is(err, ErrNoRewriteViolated) {
+			t.Fatalf("expected no rewrite violation error, got %v", err)
+		}
+
+		i++
+	}
+
+	if i != 4 {
+		t.Fatalf("expected 4 errors, got %v", i)
+	}
+
+	// get the object from the path
+	content, err := client.Get(testPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(content) != 1 {
+		t.Fatalf("expected 1 object, got %v", content)
+	}
+
+	if content["test"].Age != ageIndex {
+		t.Fatalf("expected %v, got %v", ageIndex, content["test"].Age)
 	}
 }
