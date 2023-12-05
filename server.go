@@ -35,14 +35,6 @@ type Server struct {
 	// pathLocksMux is a mutex that protects the pathLocks map
 	pathLocksMux sync.Mutex
 
-	// ownedPathGenerations caches the last generations for paths that were requested with the
-	// NoRewrite() option. This tracks the generation of objects to assert ownership of the
-	// current client.
-	ownedPathGenerations map[string]int64
-
-	// pathGenerationsMux is a mutex that protects the pathGenerations map
-	pathGenerationsMux sync.Mutex
-
 	// DistributedLock indicates whether the client should use distributed locking
 	// to prevent multiple processes from writing to the same path at the same time.
 	// While this option prevents multi-process race, it also slows down the process
@@ -57,9 +49,8 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 	}
 
 	c := &Server{
-		bucket:               gcs.Bucket(bucketName),
-		pathLocks:            map[string]*sync.RWMutex{},
-		ownedPathGenerations: map[string]int64{},
+		bucket:    gcs.Bucket(bucketName),
+		pathLocks: map[string]*sync.RWMutex{},
 	}
 
 	for _, opt := range opts {
@@ -88,9 +79,10 @@ func (c *Server) potPath(urlPath string) string {
 
 // CallOpts is a set of options that can be passed to the client methods.
 type CallOpts struct {
-	batch             bool
-	norewrite         bool
-	norewriteDuration time.Duration
+	batch               bool
+	norewrite           bool
+	norewriteDuration   time.Duration
+	lastKnownGeneration int64
 }
 
 // CallOpt is a functional option for the client methods. It allows to
@@ -120,13 +112,28 @@ func WithNoRewrite(deadline time.Duration) CallOpt {
 	}
 }
 
+// WithRewriteGeneration sets the last known generation for the given path. This is used
+// in conjunction with the no-rewrite option to assert whether the last modification
+// of the pot is the same as the last known generation.
+func WithRewriteGeneration(gen int64) CallOpt {
+	return func(o *CallOpts) {
+		o.lastKnownGeneration = gen
+	}
+}
+
 // canRewrite checks whether the last modification of the pot is older than the
 // provided duration.
 func canRewrite(lastModification, now time.Time, duration time.Duration) bool {
 	return lastModification.Add(duration).Before(now)
 }
 
-func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) (map[string]interface{}, error) {
+// CreateResponse is the response returned by the Create method.
+type CreateResponse struct {
+	Content    map[string]any `json:"content"`
+	Generation int64          `json:"generation"`
+}
+
+func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) (*CreateResponse, error) {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "create"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "create"))
 
@@ -221,18 +228,16 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 
 			// check if the last cached generation doesn't correspond to the current one
 			// and if so, enable the rewrite anyway
-			c.pathGenerationsMux.Lock()
-			if reader.Attrs.Generation == c.ownedPathGenerations[dir] {
+			if reader.Attrs.Generation == opts.lastKnownGeneration {
 				allowRewrite = true
 			}
-			c.pathGenerationsMux.Unlock()
 		}
 	}
 
 	for k, v := range objs {
 		if _, ok := content[k]; ok {
 			if !allowRewrite {
-				return content, fmt.Errorf("%w: %s", ErrNoRewriteViolated, k)
+				return nil, fmt.Errorf("%w: %s", ErrNoRewriteViolated, k)
 			}
 		}
 
@@ -246,13 +251,10 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 	}
 	writer.Close()
 
-	if opts.norewrite {
-		c.pathGenerationsMux.Lock()
-		c.ownedPathGenerations[dir] = writer.Attrs().Generation
-		c.pathGenerationsMux.Unlock()
-	}
-
-	return content, nil
+	return &CreateResponse{
+		Content:    objs,
+		Generation: writer.Attrs().Generation,
+	}, nil
 }
 
 // decodeBatchContent decodes the content of a batch request. The batch request

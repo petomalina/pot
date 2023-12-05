@@ -89,7 +89,7 @@ func TestFlow(t *testing.T) {
 			{Name: "test2"},
 		},
 	}
-	err = client.Create(testPath, []testStruct{obj})
+	_, err = client.Create(testPath, []testStruct{obj})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestElection(t *testing.T) {
 				Age: i,
 			}
 
-			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite(time.Minute))
+			_, err := client.Create(testPath, []testStruct{obj}, WithNoRewrite(time.Minute))
 			if err != nil {
 				errs <- err
 				return
@@ -233,20 +233,18 @@ func TestReElection(t *testing.T) {
 		primary := true
 
 		// try to get the lock on both, one of these processes must get the violation error
-		err := client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
+		_, err := client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
 		if err != nil {
-			slog.Info("election result error", slog.String("p", id), slog.String("err", err.Error()))
 			if errors.Is(err, ErrNoRewriteViolated) {
 				primary = false
 			} else {
 				errs <- fmt.Errorf("secondary must fail on rewrite violation, but failed on: %w", err)
 			}
-		} else {
-			slog.Info("election result", slog.String("p", id), slog.Bool("primary", primary))
 		}
+		slog.Info("election result", slog.String("p", id), slog.Bool("primary", primary))
 
 		// try updating once more to make sure primary can update while secondary can't
-		err = client.Create(testPath, []testStruct{{ID: "leader", Age: 2}}, WithNoRewrite(time.Second*5))
+		_, err = client.Create(testPath, []testStruct{{ID: "leader", Age: 2}}, WithNoRewrite(time.Second*5))
 		if err != nil {
 			if errors.Is(err, ErrNoRewriteViolated) && primary {
 				errs <- fmt.Errorf("primary failed to update the object through ownership: %w", err)
@@ -259,7 +257,7 @@ func TestReElection(t *testing.T) {
 
 		time.Sleep(time.Second * 5)
 		if !primary {
-			err = client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
+			_, err = client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
 			if err != nil {
 				errs <- fmt.Errorf("secondary failed to get the lock after desired time")
 			}
@@ -287,17 +285,17 @@ func TestNoRewriteDuration(t *testing.T) {
 
 	client := newTestAPIClient()
 
-	err := client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
+	_, err := client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
+	_, err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil && !errors.Is(err, ErrNoRewriteViolated) {
 		t.Fatalf("expected no rewrite violation error, got %v", err)
 	}
 
-	err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
+	_, err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil {
 		t.Fatal(err)
 	}

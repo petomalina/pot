@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"sync"
 )
 
 // Unique is an interface that is used to identify a model.
@@ -21,6 +23,14 @@ type Client[T Unique] struct {
 	// BaseURL is the base URL of the Pot API server.
 	BaseURL string
 
+	// ownedPathGenerations caches the last generations for paths that were requested with the
+	// NoRewrite() option. This tracks the generation of objects to assert ownership of the
+	// current client.
+	ownedPathGenerations map[string]int64
+
+	// ownedPathGenerationsMux is a mutex that protects the ownedPathGenerations map.
+	ownedPathGenerationsMux sync.Mutex
+
 	// client is the HTTP client used to make requests to the Pot API server.
 	client *http.Client
 }
@@ -32,8 +42,9 @@ func NewClient[T Unique](baseURL string) *Client[T] {
 	}
 
 	return &Client[T]{
-		BaseURL: baseURL,
-		client:  http.DefaultClient,
+		BaseURL:              baseURL,
+		ownedPathGenerations: map[string]int64{},
+		client:               http.DefaultClient,
 	}
 }
 
@@ -55,7 +66,7 @@ func (c *Client[T]) Get(urlPath string) (map[string]T, error) {
 }
 
 // Create calls the POST method on the Pot API server.
-func (c *Client[T]) Create(urlPath string, obj []T, co ...CallOpt) error {
+func (c *Client[T]) Create(urlPath string, obj []T, co ...CallOpt) (*CreateResponse, error) {
 	opts := &CallOpts{}
 	for _, opt := range co {
 		opt(opts)
@@ -69,31 +80,46 @@ func (c *Client[T]) Create(urlPath string, obj []T, co ...CallOpt) error {
 
 	b, err := json.Marshal(content)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	req, err := http.NewRequest(http.MethodPost, c.BaseURL+urlPath, bytes.NewReader(b))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	q := req.URL.Query()
 	q.Set("batch", "true")
 	if opts.norewrite {
 		q.Set("norewrite", opts.norewriteDuration.String())
+		if generation, ok := c.ownedPathGenerations[urlPath]; ok {
+			q.Set("generation", strconv.FormatInt(generation, 10))
+		}
 	}
+
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusLocked {
-		return ErrNoRewriteViolated
+	var respContent CreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&respContent); err != nil {
+		return nil, err
 	}
 
-	return nil
+	if respContent.Generation != 0 {
+		c.ownedPathGenerationsMux.Lock()
+		c.ownedPathGenerations[urlPath] = respContent.Generation
+		c.ownedPathGenerationsMux.Unlock()
+	}
+
+	if resp.StatusCode == http.StatusLocked {
+		return nil, ErrNoRewriteViolated
+	}
+
+	return &respContent, nil
 }
 
 // Remove calls the DELETE method on the Pot API server.

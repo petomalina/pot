@@ -57,7 +57,7 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		content := map[string]interface{}{}
+		var content any
 
 		// trim the leading slash as bucket paths are relative
 		relPath := strings.TrimPrefix(r.URL.Path, "/")
