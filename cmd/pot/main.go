@@ -90,7 +90,12 @@ func main() {
 
 		switch r.Method {
 		case http.MethodGet:
-			content, err = potClient.Get(r.Context(), relPath)
+			// if the path has a :list suffix then we want to list the keys
+			if strings.HasSuffix(relPath, ":list") {
+				content, err = potClient.ListPaths(r.Context(), strings.TrimSuffix(relPath, ":list"))
+			} else {
+				content, err = potClient.Get(r.Context(), relPath)
+			}
 
 		case http.MethodPost:
 			content, err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)

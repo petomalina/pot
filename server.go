@@ -273,6 +273,49 @@ func decodeBatchContent(r io.Reader) (map[string]any, error) {
 	return content, nil
 }
 
+type ListPathsResponse struct {
+	Paths []string `json:"paths"`
+}
+
+// ListPaths returns a list of available pot paths stored on the bucket. Each path
+// is stored on gcs as a directory with a data.json file inside. This method returns
+// a list of paths without the data.json suffix.
+func (c *Server) ListPaths(ctx context.Context, subdir string) (*ListPathsResponse, error) {
+	res := &ListPathsResponse{
+		Paths: []string{},
+	}
+
+	objList := c.bucket.Objects(ctx, &storage.Query{
+		Prefix: subdir,
+	})
+	for {
+		obj, err := objList.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// ignore objects that are not directories
+		if !strings.HasSuffix(obj.Name, "/data.json") {
+			continue
+		}
+
+		// trim the data.json suffix
+		relPath := strings.TrimSuffix(obj.Name, "/data.json")
+
+		// ignore the .potlock file
+		if strings.HasSuffix(relPath, ".potlock") {
+			continue
+		}
+
+		res.Paths = append(res.Paths, relPath)
+	}
+
+	return res, nil
+}
+
 func (c *Server) Get(ctx context.Context, dir string) (map[string]interface{}, error) {
 	c.localLock(dir).RLock()
 	defer c.localLock(dir).RUnlock()
