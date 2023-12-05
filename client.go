@@ -48,6 +48,27 @@ func NewClient[T Unique](baseURL string) *Client[T] {
 	}
 }
 
+// ListPaths lists all available paths on the bucket
+func (c *Client[T]) ListPaths(urlPath string) (*ListPathsResponse, error) {
+	respObj := ListPathsResponse{}
+
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+urlPath+":list", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&respObj); err != nil {
+		return nil, err
+	}
+
+	return &respObj, nil
+}
+
 // Get calls the GET method on the Pot API server.
 func (c *Client[T]) Get(urlPath string) (map[string]T, error) {
 	content := map[string]T{}

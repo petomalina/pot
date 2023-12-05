@@ -58,6 +58,43 @@ func cleanup(t *testing.T, testPath string) {
 	}
 }
 
+func TestListPaths(t *testing.T) {
+	testPath := "test/path"
+	cleanup(t, testPath)
+
+	client := newTestAPIClient()
+
+	// first make sure there is nothing stored on the path
+	res, err := client.ListPaths(testPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.Paths) != 0 {
+		t.Fatalf("expected no paths, got %v", res)
+	}
+
+	// store an object on the path
+	_, err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// get the object from the path
+	res, err = client.ListPaths(testPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.Paths) != 1 {
+		t.Fatalf("expected 1 path, got %v", res)
+	}
+
+	if res.Paths[0] != testPath {
+		t.Fatalf("expected test, got %v", res.Paths)
+	}
+}
+
 func TestFlow(t *testing.T) {
 	testPath := "test/path"
 	cleanup(t, testPath)
