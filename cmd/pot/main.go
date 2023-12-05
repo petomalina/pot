@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/petomalina/pot"
 )
@@ -47,7 +50,7 @@ func main() {
 		opts = append(opts, pot.WithDistributedLock())
 	}
 
-	potClient, err := pot.NewClient(ctx, *bucketNameFlag, opts...)
+	potClient, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)
@@ -55,7 +58,7 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		content := map[string]interface{}{}
+		var content any
 
 		// trim the leading slash as bucket paths are relative
 		relPath := strings.TrimPrefix(r.URL.Path, "/")
@@ -65,12 +68,40 @@ func main() {
 			callOpts = append(callOpts, pot.WithBatch())
 		}
 
+		if r.URL.Query().Has("norewrite") {
+			strDur := r.URL.Query().Get("norewrite")
+			dur, err := time.ParseDuration(strDur)
+			if err != nil {
+				dur = time.Duration(0)
+			}
+
+			callOpts = append(callOpts, pot.WithNoRewrite(dur))
+
+			if r.URL.Query().Has("generation") {
+				gen, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				callOpts = append(callOpts, pot.WithRewriteGeneration(gen))
+			}
+		}
+
 		switch r.Method {
 		case http.MethodGet:
-			content, err = potClient.Get(r.Context(), relPath)
+			// if the path has a :list suffix then we want to list the keys
+			if strings.HasSuffix(relPath, ":list") {
+				content, err = potClient.ListPaths(r.Context(), strings.TrimSuffix(relPath, ":list"))
+			} else {
+				content, err = potClient.Get(r.Context(), relPath)
+			}
 
 		case http.MethodPost:
-			err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
+			content, err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
+			if err == nil {
+				w.WriteHeader(http.StatusCreated)
+			}
 
 		case http.MethodDelete:
 			err = potClient.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
@@ -80,8 +111,13 @@ func main() {
 		}
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			// norewrite violation returns
+			if errors.Is(err, pot.ErrNoRewriteViolated) {
+				w.WriteHeader(http.StatusLocked)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// encode the content to the response
