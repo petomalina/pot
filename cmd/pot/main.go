@@ -49,7 +49,7 @@ func main() {
 		opts = append(opts, pot.WithDistributedLock())
 	}
 
-	potClient, err := pot.NewClient(ctx, *bucketNameFlag, opts...)
+	potClient, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)

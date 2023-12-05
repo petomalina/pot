@@ -28,8 +28,8 @@ func (t testStruct) Key() string {
 	return t.ID
 }
 
-func newTestAPIClient() *APIClient[testStruct] {
-	return NewAPIClient[testStruct]("http://localhost:8080")
+func newTestAPIClient() *Client[testStruct] {
+	return NewClient[testStruct]("http://localhost:8080")
 }
 
 func cleanup(t *testing.T, testPath string) {
@@ -140,7 +140,6 @@ func TestElection(t *testing.T) {
 	cleanup(t, testPath)
 
 	client := newTestAPIClient()
-
 	// Run 5 different "clients" that will try to create the same object.
 	// Only one of them should succeed, while all others should receive
 	// the http.StatusLocked error and the content of the first client.
@@ -155,6 +154,7 @@ func TestElection(t *testing.T) {
 		wg.Add(1)
 
 		go func(i int) {
+			client := newTestAPIClient()
 			defer wg.Done()
 
 			obj := testStruct{
@@ -162,11 +162,13 @@ func TestElection(t *testing.T) {
 				Age: i,
 			}
 
-			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite(0))
+			err := client.Create(testPath, []testStruct{obj}, WithNoRewrite(time.Minute))
 			if err != nil {
 				errs <- err
 				return
 			}
+
+			slog.Info("election winner", slog.Int("p", i))
 
 			mut.Lock()
 			ageIndex = i
@@ -214,6 +216,15 @@ func TestReElection(t *testing.T) {
 
 	errs := make(chan error, 100)
 
+	// testFn is a function simulating single client that tries to get the lock on the path
+	// The test runs following steps:
+	// - both clients try to get the lock on the path
+	// - one of them gets the lock and updates the object, becoming primary
+	// 	 the other one fails to get the lock and receives ErrNoRewriteViolated error
+	// - primary client updates the object again, ensuring it can update the object
+	//   secondary client tries to update the object, but fails with ErrNoRewriteViolated
+	// - primary client waits for the lock to expire
+	// - secondary client tries to get the lock and succeeds
 	testFn := func(id string) {
 		defer wg.Done()
 		client := newTestAPIClient()
@@ -222,19 +233,20 @@ func TestReElection(t *testing.T) {
 		primary := true
 
 		// try to get the lock on both, one of these processes must get the violation error
-		err := client.Create(testPath, []testStruct{{ID: id, Age: 1}}, WithNoRewrite(time.Second*2))
+		err := client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
 		if err != nil {
+			slog.Info("election result error", slog.String("p", id), slog.String("err", err.Error()))
 			if errors.Is(err, ErrNoRewriteViolated) {
 				primary = false
 			} else {
 				errs <- fmt.Errorf("secondary must fail on rewrite violation, but failed on: %w", err)
 			}
+		} else {
+			slog.Info("election result", slog.String("p", id), slog.Bool("primary", primary))
 		}
 
-		slog.Info("election result", slog.String("p", id), slog.Bool("primary", primary))
-
 		// try updating once more to make sure primary can update while secondary can't
-		err = client.Create(testPath, []testStruct{{ID: id, Age: 2}}, WithNoRewrite(time.Second*2))
+		err = client.Create(testPath, []testStruct{{ID: "leader", Age: 2}}, WithNoRewrite(time.Second*5))
 		if err != nil {
 			if errors.Is(err, ErrNoRewriteViolated) && primary {
 				errs <- fmt.Errorf("primary failed to update the object through ownership: %w", err)
@@ -245,9 +257,9 @@ func TestReElection(t *testing.T) {
 			}
 		}
 
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second * 5)
 		if !primary {
-			err = client.Create(testPath, []testStruct{{ID: id, Age: 1}}, WithNoRewrite(time.Second*2))
+			err = client.Create(testPath, []testStruct{{ID: "leader", Age: 1}}, WithNoRewrite(time.Second*5))
 			if err != nil {
 				errs <- fmt.Errorf("secondary failed to get the lock after desired time")
 			}
@@ -269,26 +281,23 @@ func TestReElection(t *testing.T) {
 		t.Fatal(errslice)
 	}
 }
-
 func TestNoRewriteDuration(t *testing.T) {
 	const testPath = "test/path"
 	cleanup(t, testPath)
 
 	client := newTestAPIClient()
 
-	err := client.Create(testPath, []testStruct{{ID: "test"}})
+	err := client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = client.Create(testPath, []testStruct{{ID: "test2"}}, WithNoRewrite(time.Second*2))
+	err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil && !errors.Is(err, ErrNoRewriteViolated) {
 		t.Fatalf("expected no rewrite violation error, got %v", err)
 	}
 
-	time.Sleep(time.Second * 2)
-
-	err = client.Create(testPath, []testStruct{{ID: "test3"}})
+	err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
 	if err != nil {
 		t.Fatal(err)
 	}
