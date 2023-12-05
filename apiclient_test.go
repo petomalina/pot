@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -200,6 +202,71 @@ func TestElection(t *testing.T) {
 
 	if content["test"].Age != ageIndex {
 		t.Fatalf("expected %v, got %v", ageIndex, content["test"].Age)
+	}
+}
+
+func TestReElection(t *testing.T) {
+	testPath := "test/path"
+	cleanup(t, testPath)
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	errs := make(chan error, 100)
+
+	testFn := func(id string) {
+		defer wg.Done()
+		client := newTestAPIClient()
+
+		// primary flags the client as the one holding the lock
+		primary := true
+
+		// try to get the lock on both, one of these processes must get the violation error
+		err := client.Create(testPath, []testStruct{{ID: id, Age: 1}}, WithNoRewrite(time.Second*2))
+		if err != nil {
+			if errors.Is(err, ErrNoRewriteViolated) {
+				primary = false
+			} else {
+				errs <- fmt.Errorf("secondary must fail on rewrite violation, but failed on: %w", err)
+			}
+		}
+
+		slog.Info("election result", slog.String("p", id), slog.Bool("primary", primary))
+
+		// try updating once more to make sure primary can update while secondary can't
+		err = client.Create(testPath, []testStruct{{ID: id, Age: 2}}, WithNoRewrite(time.Second*2))
+		if err != nil {
+			if errors.Is(err, ErrNoRewriteViolated) && primary {
+				errs <- fmt.Errorf("primary failed to update the object through ownership: %w", err)
+			}
+
+			if !errors.Is(err, ErrNoRewriteViolated) && !primary {
+				errs <- fmt.Errorf("secondary must fail on rewrite violation, but failed on: %w", err)
+			}
+		}
+
+		time.Sleep(time.Second * 2)
+		if !primary {
+			err = client.Create(testPath, []testStruct{{ID: id, Age: 1}}, WithNoRewrite(time.Second*2))
+			if err != nil {
+				errs <- fmt.Errorf("secondary failed to get the lock after desired time")
+			}
+		}
+	}
+
+	go testFn("1")
+	go testFn("2")
+
+	wg.Wait()
+	close(errs)
+
+	var errslice []error
+	for err := range errs {
+		errslice = append(errslice, err)
+	}
+
+	if len(errslice) > 0 {
+		t.Fatal(errslice)
 	}
 }
 

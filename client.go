@@ -32,6 +32,16 @@ type Client struct {
 	// colliding during distributed lock acquisition.
 	pathLocks map[string]*sync.RWMutex
 
+	// pathLocksMux is a mutex that protects the pathLocks map
+	pathLocksMux sync.Mutex
+
+	// pathGenerations caches the last generations for paths that were requested with the
+	// NoRewrite() option. This tracks the generation of objects to assert ownership
+	pathGenerations map[string]int64
+
+	// pathGenerationsMux is a mutex that protects the pathGenerations map
+	pathGenerationsMux sync.Mutex
+
 	// DistributedLock indicates whether the client should use distributed locking
 	// to prevent multiple processes from writing to the same path at the same time.
 	// While this option prevents multi-process race, it also slows down the process
@@ -46,8 +56,9 @@ func NewClient(ctx context.Context, bucketName string, opts ...Option) (*Client,
 	}
 
 	c := &Client{
-		bucket:    gcs.Bucket(bucketName),
-		pathLocks: map[string]*sync.RWMutex{},
+		bucket:          gcs.Bucket(bucketName),
+		pathLocks:       map[string]*sync.RWMutex{},
+		pathGenerations: map[string]int64{},
 	}
 
 	for _, opt := range opts {
@@ -92,8 +103,15 @@ func WithBatch() CallOpt {
 	}
 }
 
-// WithNoRewrite disables rewriting of keys that already exist in data.
-// This option makes the whole request fail if any of the keys already exist.
+// WithNoRewrite disables rewriting of keys that already exist in data and only
+// enables the write if either of these conditions is met:
+//   - the key doesn't exist in data.
+//   - the key exists in data, but the last modification of the data is older than
+//     the provided duration.
+//   - the last read generation is the last known generation for this path
+//     (cached by the client).
+//
+// This option makes the whole request fail if any of the keys fail.
 func WithNoRewrite(deadline time.Duration) CallOpt {
 	return func(o *CallOpts) {
 		o.norewrite = true
@@ -174,19 +192,30 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		objs[key] = obj
 	}
 
-	// check whether the no-rewrite rule contains duration and if so, check whether
-	// the duration has passed since the last modification of the pot
-	norewriteDurationPassed := true
-	if opts.norewrite && opts.norewriteDuration > 0 && reader != nil {
-		lastMod := reader.Attrs.LastModified
+	// this part is for the no-rewrite rule only
+	allowRewrite := true
+	if reader != nil {
+		// check whether the no-rewrite rule contains duration and if so, check whether
+		// the duration has passed since the last modification of the pot
+		if opts.norewrite && opts.norewriteDuration > 0 {
+			lastMod := reader.Attrs.LastModified
 
-		if lastMod.Add(opts.norewriteDuration).Before(time.Now()) {
-			norewriteDurationPassed = false
+			if lastMod.Add(opts.norewriteDuration).Before(time.Now()) {
+				allowRewrite = false
+			}
 		}
+
+		// check if the last cached generation doesn't correspond to the current one
+		// and if so, enable the rewrite anyway
+		c.pathGenerationsMux.Lock()
+		if opts.norewrite && reader.Attrs.Generation == c.pathGenerations[dir] {
+			allowRewrite = true
+		}
+		c.pathGenerationsMux.Unlock()
 	}
 
 	for k, v := range objs {
-		if opts.norewrite && norewriteDurationPassed {
+		if opts.norewrite && allowRewrite {
 			if _, ok := content[k]; ok {
 				return content, fmt.Errorf("%w: %s", ErrNoRewriteViolated, k)
 			}
@@ -200,6 +229,12 @@ func (c *Client) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 	defer writer.Close()
 	if err := json.NewEncoder(writer).Encode(content); err != nil {
 		return nil, err
+	}
+
+	if opts.norewrite {
+		c.pathGenerationsMux.Lock()
+		c.pathGenerations[dir] = writer.Generation
+		c.pathGenerationsMux.Unlock()
 	}
 
 	slog.Info("updated pot", slog.String("dir", dir), slog.String("method", "create"))
@@ -376,6 +411,9 @@ func (c *Client) Zip(ctx context.Context, dir string) error {
 // localLock returns the lock for the given path. If the lock doesn't exist, it
 // will be created and returned.
 func (c *Client) localLock(dir string) *sync.RWMutex {
+	c.pathLocksMux.Lock()
+	defer c.pathLocksMux.Unlock()
+
 	lock, ok := c.pathLocks[dir]
 	if ok {
 		return lock
