@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,16 @@ func main() {
 			}
 
 			callOpts = append(callOpts, pot.WithNoRewrite(dur))
+
+			if r.URL.Query().Has("generation") {
+				gen, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				callOpts = append(callOpts, pot.WithRewriteGeneration(gen))
+			}
 		}
 
 		switch r.Method {

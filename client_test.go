@@ -291,8 +291,8 @@ func TestNoRewriteDuration(t *testing.T) {
 	}
 
 	_, err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))
-	if err != nil && !errors.Is(err, ErrNoRewriteViolated) {
-		t.Fatalf("expected no rewrite violation error, got %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	_, err = client.Create(testPath, []testStruct{{ID: "test"}}, WithNoRewrite(time.Second*10))

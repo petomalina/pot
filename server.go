@@ -352,8 +352,6 @@ func (c *Server) Remove(ctx context.Context, dir string, keys ...string) error {
 		return err
 	}
 
-	slog.Info("updated pot", slog.String("dir", dir), slog.String("method", "remove"))
-
 	return nil
 }
 
