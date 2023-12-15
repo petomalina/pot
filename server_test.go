@@ -3,9 +3,15 @@ package pot
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/suite"
 )
 
-func TestCanRewrite(t *testing.T) {
+type ServerSuite struct {
+	suite.Suite
+}
+
+func (s *ServerSuite) TestCanRewrite() {
 	cases := []struct {
 		caseName         string
 		lastModification time.Time
@@ -19,10 +25,12 @@ func TestCanRewrite(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run(c.caseName, func(t *testing.T) {
-			if canRewrite(c.lastModification, c.now, c.duration) != c.expected {
-				t.Fatalf("expected %v, got %v", c.expected, !c.expected)
-			}
+		s.Run(c.caseName, func() {
+			s.Equal(c.expected, canRewrite(c.lastModification, c.now, c.duration))
 		})
 	}
+}
+
+func TestServerSuite(t *testing.T) {
+	suite.Run(t, new(ServerSuite))
 }

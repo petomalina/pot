@@ -2,16 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/petomalina/pot"
 )
@@ -44,95 +39,53 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	shutdownOtel, err := pot.BootstrapOTEL(ctx)
+	if err != nil {
+		slog.Error("failed to bootstrap OTEL: %v", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownOtel(ctx); err != nil {
+			slog.Error("failed to shutdown OTEL: %v", err)
+			os.Exit(1)
+		}
+	}()
+
 	opts := []pot.Option{}
 	if *distributedLockFlag {
 		slog.Debug("distributed lock enabled")
 		opts = append(opts, pot.WithDistributedLock())
 	}
 
-	potClient, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
+	if *zipFlag != "" {
+		slog.Debug("zip file enabled")
+		opts = append(opts, pot.WithZip(*zipFlag))
+	}
+
+	server, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		var content any
+	// meter := otel.GetMeterProvider().Meter("github.com/petomalina/pot")
 
-		// trim the leading slash as bucket paths are relative
-		relPath := strings.TrimPrefix(r.URL.Path, "/")
+	// apiCounter, err := meter.Int64Counter(
+	// 	"pot.api_calls",
+	// 	metric.WithDescription("pot.api_calls is a counter of all api calls"),
+	// 	metric.WithUnit("{call}"),
+	// )
+	// if err != nil {
+	// 	slog.Error("failed to create api_calls counter: %v", err)
+	// 	os.Exit(1)
+	// }
 
-		callOpts := []pot.CallOpt{}
-		if r.URL.Query().Has("batch") {
-			callOpts = append(callOpts, pot.WithBatch())
-		}
+	// http.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}))
 
-		if r.URL.Query().Has("norewrite") {
-			strDur := r.URL.Query().Get("norewrite")
-			dur, err := time.ParseDuration(strDur)
-			if err != nil {
-				dur = time.Duration(0)
-			}
+	// register pot handler
+	handler := server.Routes()
 
-			callOpts = append(callOpts, pot.WithNoRewrite(dur))
-
-			if r.URL.Query().Has("generation") {
-				gen, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-
-				callOpts = append(callOpts, pot.WithRewriteGeneration(gen))
-			}
-		}
-
-		switch r.Method {
-		case http.MethodGet:
-			// if the path has a :list suffix then we want to list the keys
-			if strings.HasSuffix(relPath, ":list") {
-				content, err = potClient.ListPaths(r.Context(), strings.TrimSuffix(relPath, ":list"))
-			} else {
-				content, err = potClient.Get(r.Context(), relPath)
-			}
-
-		case http.MethodPost:
-			content, err = potClient.Create(r.Context(), relPath, r.Body, callOpts...)
-			if err == nil {
-				w.WriteHeader(http.StatusCreated)
-			}
-
-		case http.MethodDelete:
-			err = potClient.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-
-		if err != nil {
-			// norewrite violation returns
-			if errors.Is(err, pot.ErrNoRewriteViolated) {
-				w.WriteHeader(http.StatusLocked)
-			} else {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		// encode the content to the response
-		if err := json.NewEncoder(w).Encode(content); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-		if *zipFlag != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
-			if err := potClient.Zip(r.Context(), *zipFlag); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-		}
-	})
-
-	srv := &http.Server{Addr: ":8080"}
+	srv := &http.Server{Addr: ":8080", Handler: handler}
 	go func() {
 		slog.Info("starting server on :8080")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

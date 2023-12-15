@@ -40,6 +40,10 @@ type Server struct {
 	// While this option prevents multi-process race, it also slows down the process
 	// as two objects need to be written to the bucket instead of one.
 	distributedLock bool
+
+	// zip is the path where the zip file is stored on the bucket. If this is empty,
+	// the zip functionality is disabled.
+	zip string
 }
 
 func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server, error) {
@@ -70,6 +74,15 @@ type Option func(*Server)
 func WithDistributedLock() Option {
 	return func(c *Server) {
 		c.distributedLock = true
+	}
+}
+
+// WithZip enables the zip functionality on the Client. This will
+// create a tar.gz file on the bucket with all the objects in the
+// pot.
+func WithZip(zip string) Option {
+	return func(c *Server) {
+		c.zip = zip
 	}
 }
 

@@ -2,8 +2,7 @@ name: Build and Release to Docker Hub
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 env:
   IMAGE: petomalinahub/pot
