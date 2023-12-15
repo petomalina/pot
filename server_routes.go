@@ -1,6 +1,7 @@
 package pot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,81 +9,30 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"github.com/gorilla/mux"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
 )
 
 func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
+	mux := mux.NewRouter()
+	mux.Use(otelmux.Middleware("pot-server"))
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		var content any
+	mux.
+		Methods(http.MethodGet).
+		PathPrefix("/").
+		HandlerFunc(s.routeGetFunc)
 
-		// trim the leading slash as bucket paths are relative
-		relPath := strings.TrimPrefix(r.URL.Path, "/")
+	mux.
+		Methods(http.MethodPost).
+		PathPrefix("/").
+		HandlerFunc(s.routePostFunc)
 
-		callOpts := []CallOpt{}
-		if r.URL.Query().Has("batch") {
-			callOpts = append(callOpts, WithBatch())
-		}
+	mux.
+		Methods(http.MethodDelete).
+		PathPrefix("/").
+		HandlerFunc(s.routeDeleteFunc)
 
-		if r.URL.Query().Has("norewrite") {
-			strDur := r.URL.Query().Get("norewrite")
-			dur, err := time.ParseDuration(strDur)
-			if err != nil {
-				dur = time.Duration(0)
-			}
-
-			callOpts = append(callOpts, WithNoRewrite(dur))
-
-			if r.URL.Query().Has("generation") {
-				gen, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-
-				callOpts = append(callOpts, WithRewriteGeneration(gen))
-			}
-		}
-
-		switch r.Method {
-		case http.MethodGet:
-			// if the path has a :list suffix then we want to list the keys
-			if strings.HasSuffix(relPath, ":list") {
-				content, err = s.ListPaths(r.Context(), strings.TrimSuffix(relPath, ":list"))
-			} else {
-				content, err = s.Get(r.Context(), relPath)
-			}
-
-		case http.MethodPost:
-			content, err = s.Create(r.Context(), relPath, r.Body, callOpts...)
-			if err == nil {
-				w.WriteHeader(http.StatusCreated)
-			}
-
-		case http.MethodDelete:
-			err = s.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-
-		if err != nil {
-			// norewrite violation returns
-			if errors.Is(err, ErrNoRewriteViolated) {
-				w.WriteHeader(http.StatusLocked)
-			} else {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-
-		// encode the content to the response
-		if err := json.NewEncoder(w).Encode(content); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
+	mux.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.zip != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
 			if err := s.Zip(r.Context(), s.zip); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -90,6 +40,112 @@ func (s *Server) Routes() http.Handler {
 		}
 	})
 
-	handler := otelhttp.NewHandler(mux, "/")
-	return handler
+	return mux
+}
+
+func (s *Server) routeGetFunc(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var content any
+
+	relPath := strings.TrimPrefix(r.URL.Path, "/")
+
+	// if the path has a :list suffix then we want to list the keys
+	if strings.HasSuffix(relPath, ":list") {
+		content, err = s.ListPaths(r.Context(), strings.TrimSuffix(relPath, ":list"))
+	} else {
+		content, err = s.Get(r.Context(), relPath)
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// encode the content to the response
+	if err := json.NewEncoder(w).Encode(content); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) routePostFunc(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var content any
+
+	relPath := strings.TrimPrefix(r.URL.Path, "/")
+
+	callOpts := []CallOpt{}
+	if r.URL.Query().Has("batch") {
+		callOpts = append(callOpts, WithBatch())
+	}
+
+	if r.URL.Query().Has("norewrite") {
+		strDur := r.URL.Query().Get("norewrite")
+		dur, err := time.ParseDuration(strDur)
+		if err != nil {
+			dur = time.Duration(0)
+		}
+
+		callOpts = append(callOpts, WithNoRewrite(dur))
+
+		if r.URL.Query().Has("generation") {
+			gen, err := strconv.ParseInt(r.URL.Query().Get("generation"), 10, 64)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			callOpts = append(callOpts, WithRewriteGeneration(gen))
+		}
+	}
+
+	content, err = s.Create(r.Context(), relPath, r.Body, callOpts...)
+	if err == nil {
+		w.WriteHeader(http.StatusCreated)
+	}
+	if err != nil {
+		// norewrite violation returns
+		if errors.Is(err, ErrNoRewriteViolated) {
+			w.WriteHeader(http.StatusLocked)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	err = s.triggerZip(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// encode the content to the response
+	if err := json.NewEncoder(w).Encode(content); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) routeDeleteFunc(w http.ResponseWriter, r *http.Request) {
+	var err error
+
+	relPath := strings.TrimPrefix(r.URL.Path, "/")
+
+	err = s.Remove(r.Context(), relPath, r.URL.Query()["key"]...)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = s.triggerZip(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) triggerZip(ctx context.Context) error {
+	if s.zip != "" {
+		return s.Zip(ctx, s.zip)
+	}
+
+	return nil
 }

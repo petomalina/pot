@@ -4,8 +4,9 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -35,7 +36,7 @@ func newPropagator() propagation.TextMapPropagator {
 }
 
 func newTraceProvider(ctx context.Context, res *resource.Resource) (*trace.TracerProvider, error) {
-	traceExporter, err := otlptracehttp.New(ctx)
+	traceExporter, err := otlptrace.New(ctx, otlptracegrpc.NewClient(otlptracegrpc.WithInsecure()))
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +50,7 @@ func newTraceProvider(ctx context.Context, res *resource.Resource) (*trace.Trace
 }
 
 func newMeterProvider(ctx context.Context, res *resource.Resource) (*metric.MeterProvider, error) {
-	metricExporter, err := otlpmetrichttp.New(ctx)
+	metricExporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,6 @@ func newMeterProvider(ctx context.Context, res *resource.Resource) (*metric.Mete
 		metric.WithReader(
 			metric.NewPeriodicReader(
 				metricExporter,
-				// metric.WithInterval(time.Second*3),
 			),
 		),
 	)

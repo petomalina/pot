@@ -44,6 +44,18 @@ type Server struct {
 	// zip is the path where the zip file is stored on the bucket. If this is empty,
 	// the zip functionality is disabled.
 	zip string
+
+	// metrics indicates whether metrics should be enabled and reported by otel
+	metrics bool
+
+	// traces indicates whether traces should be enabled and reported by otel
+	traces bool
+
+	// ServerMetrics is a set of metrics that are reported by the server
+	ServerMetrics
+}
+
+type ServerMetrics struct {
 }
 
 func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server, error) {
@@ -64,11 +76,11 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 	return c, nil
 }
 
-// Option is a functional option for the Client. It allows to
-// configure the client via its constructor.
+// Option is a functional option for the server. It allows to
+// configure the server via its constructor.
 type Option func(*Server)
 
-// WithDistributedLock enables distributed locking on the Client.
+// WithDistributedLock enables distributed locking on the server.
 // This slows down the process of writing, however, it prevents
 // multiple processes from writing to the same pot at the same time.
 func WithDistributedLock() Option {
@@ -77,7 +89,7 @@ func WithDistributedLock() Option {
 	}
 }
 
-// WithZip enables the zip functionality on the Client. This will
+// WithZip enables the zip functionality on the server. This will
 // create a tar.gz file on the bucket with all the objects in the
 // pot.
 func WithZip(zip string) Option {
@@ -86,11 +98,27 @@ func WithZip(zip string) Option {
 	}
 }
 
+// WithMetrics enables metrics reporting on the server.
+func WithMetrics() Option {
+	return func(c *Server) {
+		c.metrics = true
+	}
+}
+
+// WithTracing enables traces reporting on the server.
+func WithTracing() Option {
+	return func(c *Server) {
+		c.traces = true
+	}
+}
+
+// potPath returns the path to the pot on the bucket path. Pot is the file
+// that contains the actual data.
 func (c *Server) potPath(urlPath string) string {
 	return path.Join(urlPath, "data.json")
 }
 
-// CallOpts is a set of options that can be passed to the client methods.
+// CallOpts is a set of options that can be passed to the server methods.
 type CallOpts struct {
 	batch               bool
 	norewrite           bool
@@ -98,11 +126,11 @@ type CallOpts struct {
 	lastKnownGeneration int64
 }
 
-// CallOpt is a functional option for the client methods. It allows to
-// configure the client methods.
+// CallOpt is a functional option for the server methods. It allows to
+// configure the server methods.
 type CallOpt func(*CallOpts)
 
-// WithBatch enables batch requests on the client methods.
+// WithBatch enables batch requests on the server methods.
 func WithBatch() CallOpt {
 	return func(o *CallOpts) {
 		o.batch = true
@@ -115,7 +143,7 @@ func WithBatch() CallOpt {
 //   - the key exists in data, but the last modification of the data is older than
 //     the provided duration.
 //   - the last read generation is the last known generation for this path
-//     (cached by the client).
+//     (cached by the server).
 //
 // This option makes the whole request fail if any of the keys fail.
 func WithNoRewrite(deadline time.Duration) CallOpt {
@@ -155,7 +183,7 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		opt(opts)
 	}
 
-	// acquire the lock for the given path on the current client and defer the release
+	// acquire the lock for the given path on the current server and defer the release
 	c.localLock(dir).Lock()
 	defer c.localLock(dir).Unlock()
 
@@ -224,8 +252,8 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 
 	// assert whether rewrites of existing keys are allowed. By default, clients
 	// can overwrite any keys at any time. However if the no-rewrite option is
-	// set, the client will only allow the write if the key doesn't exist, is owned
-	// by the current client or the last modification of the key is older than the
+	// set, the server will only allow the write if the key doesn't exist, is owned
+	// by the current server or the last modification of the key is older than the
 	// provided duration.
 	allowRewrite := true
 

@@ -62,25 +62,13 @@ func main() {
 		opts = append(opts, pot.WithZip(*zipFlag))
 	}
 
+	opts = append(opts, pot.WithMetrics(), pot.WithTracing())
+
 	server, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)
 	}
-
-	// meter := otel.GetMeterProvider().Meter("github.com/petomalina/pot")
-
-	// apiCounter, err := meter.Int64Counter(
-	// 	"pot.api_calls",
-	// 	metric.WithDescription("pot.api_calls is a counter of all api calls"),
-	// 	metric.WithUnit("{call}"),
-	// )
-	// if err != nil {
-	// 	slog.Error("failed to create api_calls counter: %v", err)
-	// 	os.Exit(1)
-	// }
-
-	// http.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}))
 
 	// register pot handler
 	handler := server.Routes()
