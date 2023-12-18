@@ -3,6 +3,8 @@ package pot
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
@@ -125,6 +127,19 @@ func (c *Client[T]) Create(urlPath string, obj []T, co ...CallOpt) (*CreateRespo
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusLocked {
+		return nil, ErrNoRewriteViolated
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		bodyString := string(bodyBytes)
+		return nil, fmt.Errorf("unexpected status code: %v, body: %s", resp.StatusCode, bodyString)
+	}
+
 	var respContent CreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&respContent); err != nil {
 		return nil, err
@@ -134,10 +149,6 @@ func (c *Client[T]) Create(urlPath string, obj []T, co ...CallOpt) (*CreateRespo
 		c.ownedPathGenerationsMux.Lock()
 		c.ownedPathGenerations[urlPath] = respContent.Generation
 		c.ownedPathGenerationsMux.Unlock()
-	}
-
-	if resp.StatusCode == http.StatusLocked {
-		return nil, ErrNoRewriteViolated
 	}
 
 	return &respContent, nil

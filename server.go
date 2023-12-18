@@ -616,7 +616,7 @@ func (c *Server) lockSharedPath(ctx context.Context, dir string) (string, error)
 		return w.Close()
 	}()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create lock file: %w", err)
 	}
 
 	return strconv.FormatInt(w.Attrs().Generation, 10), nil

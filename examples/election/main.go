@@ -31,6 +31,19 @@ func main() {
 	client := pot.NewClient[Leader]("http://localhost:8080")
 
 	primary := false
+
+	// cleanup if the server goes down and we are the primary
+	defer func() {
+		if primary {
+			slog.Info("releasing primary")
+			err := client.Remove("test/election", "leader")
+			if err != nil {
+				slog.Error("failed to release", slog.String("err", err.Error()))
+			}
+		}
+	}()
+
+	// attempt to become the primary or renew the lease
 	for {
 		slog.Info("attempting election", slog.String("id", id), slog.Bool("primary", primary))
 		res, err := client.Create("test/election", []Leader{{ID: id}}, pot.WithNoRewrite(time.Second*10))
@@ -39,10 +52,7 @@ func main() {
 				primary = false
 			} else {
 				slog.Error("failed", slog.String("err", err.Error()))
-				primary = false
 			}
-
-			time.Sleep(time.Second * 3)
 		}
 
 		if !primary && err == nil {

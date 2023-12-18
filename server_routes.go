@@ -15,7 +15,10 @@ import (
 
 func (s *Server) Routes() http.Handler {
 	mux := mux.NewRouter()
-	mux.Use(otelmux.Middleware("pot-server"))
+
+	if s.TracingOptions.Enabled {
+		mux.Use(otelmux.Middleware("pot-server"))
+	}
 
 	mux.
 		Methods(http.MethodGet).

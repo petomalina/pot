@@ -61,17 +61,17 @@ func main() {
 	}
 
 	if *zipFlag != "" {
-		slog.Debug("zip file enabled")
+		slog.Info("zip file enabled")
 		opts = append(opts, pot.WithZip(*zipFlag))
 	}
 
 	if *metrics {
-		slog.Debug("metrics enabled")
+		slog.Info("metrics enabled")
 		opts = append(opts, pot.WithMetrics())
 	}
 
 	if *tracing {
-		slog.Debug("tracing enabled")
+		slog.Info("tracing enabled")
 		opts = append(opts, pot.WithTracing())
 	}
 

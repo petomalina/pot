@@ -4,7 +4,7 @@ tmp_dir = "tmp"
 
 [build]
   args_bin = []
-  bin = "./tmp/pot -bucket petomalina-pot-tests -distributed-lock"
+  bin = "./tmp/pot -bucket petomalina-pot-tests -distributed-lock -metrics"
   cmd = "go build -o ./tmp/pot ./cmd/pot"
   delay = 0
   exclude_dir = ["docs", "proto", "ui", "assets", "tmp", "vendor", "testdata"]
