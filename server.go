@@ -84,7 +84,6 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 	}
 
 	if c.MetricsOptions.Enabled {
-		var serverMetrics ServerMetricsOptions
 		avgLocalLockDuration, err := otel.
 			GetMeterProvider().
 			Meter("pot-server").
@@ -96,9 +95,7 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 		if err != nil {
 			return nil, err
 		}
-		serverMetrics.AvgLocalLockDuration = avgLocalLockDuration
-
-		c.MetricsOptions = serverMetrics
+		c.MetricsOptions.AvgLocalLockDuration = avgLocalLockDuration
 	}
 
 	return c, nil
