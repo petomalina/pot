@@ -75,8 +75,6 @@ func main() {
 		opts = append(opts, pot.WithTracing())
 	}
 
-	opts = append(opts)
-
 	server, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
