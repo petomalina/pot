@@ -17,6 +17,10 @@ import (
 	"log/slog"
 
 	"cloud.google.com/go/storage"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/iterator"
 )
 
@@ -45,17 +49,24 @@ type Server struct {
 	// the zip functionality is disabled.
 	zip string
 
-	// metrics indicates whether metrics should be enabled and reported by otel
-	metrics bool
+	// MetricsOptions is the options for metrics reporting
+	MetricsOptions ServerMetricsOptions
 
-	// traces indicates whether traces should be enabled and reported by otel
-	traces bool
-
-	// ServerMetrics is a set of metrics that are reported by the server
-	ServerMetrics
+	// TracingOptions is the options for tracing reporting
+	TracingOptions ServerTracingOptions
 }
 
-type ServerMetrics struct {
+type ServerMetricsOptions struct {
+	Enabled bool `json:"enabled"`
+
+	// AvgLocalLockDuration is the average duration of the local lock
+	AvgLocalLockDuration metric.Float64Histogram
+}
+
+type ServerTracingOptions struct {
+	Enabled bool `json:"enabled"`
+
+	tracer trace.Tracer
 }
 
 func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server, error) {
@@ -68,9 +79,26 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 		bucket:    gcs.Bucket(bucketName),
 		pathLocks: map[string]*sync.RWMutex{},
 	}
-
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	if c.MetricsOptions.Enabled {
+		var serverMetrics ServerMetricsOptions
+		avgLocalLockDuration, err := otel.
+			GetMeterProvider().
+			Meter("pot-server").
+			Float64Histogram(
+				"avg_local_lock_duration",
+				metric.WithDescription("avg_local_lock_duration is the average duration of the local lock"),
+				metric.WithUnit("ms"),
+			)
+		if err != nil {
+			return nil, err
+		}
+		serverMetrics.AvgLocalLockDuration = avgLocalLockDuration
+
+		c.MetricsOptions = serverMetrics
 	}
 
 	return c, nil
@@ -101,14 +129,15 @@ func WithZip(zip string) Option {
 // WithMetrics enables metrics reporting on the server.
 func WithMetrics() Option {
 	return func(c *Server) {
-		c.metrics = true
+		c.MetricsOptions.Enabled = true
 	}
 }
 
 // WithTracing enables traces reporting on the server.
 func WithTracing() Option {
 	return func(c *Server) {
-		c.traces = true
+		c.TracingOptions.Enabled = true
+		c.TracingOptions.tracer = otel.Tracer("pot-server")
 	}
 }
 
@@ -174,7 +203,10 @@ type CreateResponse struct {
 	Generation int64          `json:"generation"`
 }
 
-func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) (*CreateResponse, error) {
+func (s *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts ...CallOpt) (*CreateResponse, error) {
+	ctx, fullEnd := s.trace(ctx, "create", attribute.String("path", dir))
+	defer fullEnd()
+
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "create"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "create"))
 
@@ -184,29 +216,38 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 	}
 
 	// acquire the lock for the given path on the current server and defer the release
-	c.localLock(dir).Lock()
-	defer c.localLock(dir).Unlock()
+	ctx, end := s.trace(ctx, "local-lock", attribute.String("path", dir))
+	s.localLock(ctx, dir)
+	defer s.localUnlock(dir)
+	end()
 
 	// if distributed locking is enabled, try to acquire the lock
 	// and defer the release of the lock
-	if c.distributedLock {
+	if s.distributedLock {
 		slog.Debug("acquiring distributed lock", slog.String("dir", dir), slog.String("method", "create"))
 		defer slog.Debug("removing distributed lock", slog.String("dir", dir), slog.String("method", "create"))
 
-		id, err := c.lockSharedPath(ctx, dir)
+		ctx, end = s.trace(ctx, "distributed-lock", attribute.String("path", dir))
+
+		id, err := s.lockSharedPath(ctx, dir)
 		if err != nil {
+			end()
 			return nil, err
 		}
 		defer func(id string) {
-			err := c.unlockSharedPath(ctx, dir, id)
+			err := s.unlockSharedPath(ctx, dir, id)
 			if err != nil {
 				slog.Error("failed to unlock path", slog.String("dir", dir), slog.String("method", "create"), slog.String("error", err.Error()))
 			}
 		}(id)
+
+		end()
 	}
 
+	ctx, end = s.trace(ctx, "read-write", attribute.String("path", dir))
+
 	content := map[string]any{}
-	pot := c.bucket.Object(c.potPath(dir))
+	pot := s.bucket.Object(s.potPath(dir))
 
 	reader, err := pot.NewReader(ctx)
 	// return an error if an unexpected error occurred
@@ -291,6 +332,7 @@ func (c *Server) Create(ctx context.Context, dir string, r io.Reader, callOpts .
 		return nil, err
 	}
 	writer.Close()
+	end()
 
 	return &CreateResponse{
 		Content:    objs,
@@ -358,8 +400,8 @@ func (c *Server) ListPaths(ctx context.Context, subdir string) (*ListPathsRespon
 }
 
 func (c *Server) Get(ctx context.Context, dir string) (map[string]interface{}, error) {
-	c.localLock(dir).RLock()
-	defer c.localLock(dir).RUnlock()
+	c.localRLock(ctx, dir)
+	defer c.localRUnlock(dir)
 
 	content := map[string]interface{}{}
 	pot := c.bucket.Object(c.potPath(dir))
@@ -387,8 +429,8 @@ func (c *Server) Remove(ctx context.Context, dir string, keys ...string) error {
 	slog.Debug("acquiring lock", slog.String("dir", dir), slog.String("method", "remove"))
 	defer slog.Debug("releasing lock", slog.String("dir", dir), slog.String("method", "remove"))
 
-	c.localLock(dir).Lock()
-	defer c.localLock(dir).Unlock()
+	c.localLock(ctx, dir)
+	defer c.localUnlock(dir)
 
 	if c.distributedLock {
 		slog.Debug("acquiring distributed lock", slog.String("dir", dir), slog.String("method", "remove"))
@@ -440,8 +482,8 @@ func (c *Server) Remove(ctx context.Context, dir string, keys ...string) error {
 }
 
 func (c *Server) Zip(ctx context.Context, dir string) error {
-	c.localLock(dir).Lock()
-	defer c.localLock(dir).Unlock()
+	c.localLock(ctx, dir)
+	defer c.localUnlock(dir)
 
 	var buf strings.Builder
 	gzw := gzip.NewWriter(&buf)
@@ -505,18 +547,51 @@ func (c *Server) Zip(ctx context.Context, dir string) error {
 	return nil
 }
 
-// localLock returns the lock for the given path. If the lock doesn't exist, it
-// will be created and returned.
-func (c *Server) localLock(dir string) *sync.RWMutex {
-	c.pathLocksMux.Lock()
-	defer c.pathLocksMux.Unlock()
+// localLock locks the given path on the current server.
+func (s *Server) localLock(ctx context.Context, dir string) {
+	if s.MetricsOptions.Enabled {
+		start := time.Now()
+		defer func() {
+			elapsed := time.Since(start)
+			s.MetricsOptions.AvgLocalLockDuration.Record(ctx, float64(elapsed.Milliseconds()))
+		}()
+	}
 
-	lock, ok := c.pathLocks[dir]
+	s.getOrCreateLocalLock(dir).Lock()
+}
+
+// localUnlock unlocks the given path on the current server.
+func (s *Server) localUnlock(dir string) {
+	s.getOrCreateLocalLock(dir).Unlock()
+}
+
+func (s *Server) localRLock(ctx context.Context, dir string) {
+	if s.MetricsOptions.Enabled {
+		start := time.Now()
+		defer func() {
+			elapsed := time.Since(start)
+			s.MetricsOptions.AvgLocalLockDuration.Record(ctx, float64(elapsed.Milliseconds()))
+		}()
+	}
+
+	s.getOrCreateLocalLock(dir).RLock()
+}
+
+func (s *Server) localRUnlock(dir string) {
+	s.getOrCreateLocalLock(dir).RUnlock()
+}
+
+// getOrCreateLocalLock returns the lock for the given path. If the lock doesn't
+func (s *Server) getOrCreateLocalLock(dir string) *sync.RWMutex {
+	s.pathLocksMux.Lock()
+	defer s.pathLocksMux.Unlock()
+
+	lock, ok := s.pathLocks[dir]
 	if ok {
 		return lock
 	}
-	c.pathLocks[dir] = &sync.RWMutex{}
-	return c.pathLocks[dir]
+	s.pathLocks[dir] = &sync.RWMutex{}
+	return s.pathLocks[dir]
 }
 
 // lockSharedPath creates a .potlock file on the given path to prevent other processes
@@ -558,4 +633,14 @@ func (c *Server) unlockSharedPath(ctx context.Context, dir, id string) error {
 		Object(path.Join(dir, ".potlock")).
 		If(storage.Conditions{GenerationMatch: gen}).
 		Delete(ctx)
+}
+
+func (s *Server) trace(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, func(opts ...trace.SpanEndOption)) {
+	if !s.TracingOptions.Enabled {
+		return ctx, func(opts ...trace.SpanEndOption) {}
+	}
+
+	ctx, span := s.TracingOptions.tracer.Start(ctx, name, trace.WithAttributes(attrs...))
+
+	return ctx, span.End
 }

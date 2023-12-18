@@ -16,6 +16,9 @@ var (
 	bucketNameFlag      = flag.String("bucket", "", "bucket name")
 	zipFlag             = flag.String("zip", "", "zip is the path where the zip file is stored")
 	distributedLockFlag = flag.Bool("distributed-lock", false, "distributed-lock enables distributed locking of the pot")
+
+	tracing = flag.Bool("tracing", false, "tracing enables tracing")
+	metrics = flag.Bool("metrics", false, "metrics enables metrics")
 )
 
 func main() {
@@ -62,7 +65,17 @@ func main() {
 		opts = append(opts, pot.WithZip(*zipFlag))
 	}
 
-	opts = append(opts, pot.WithMetrics(), pot.WithTracing())
+	if *metrics {
+		slog.Debug("metrics enabled")
+		opts = append(opts, pot.WithMetrics())
+	}
+
+	if *tracing {
+		slog.Debug("tracing enabled")
+		opts = append(opts, pot.WithTracing())
+	}
+
+	opts = append(opts)
 
 	server, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
 	if err != nil {
