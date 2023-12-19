@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/petomalina/pot"
 )
@@ -94,7 +95,10 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	err = srv.Shutdown(ctx)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err = srv.Shutdown(shutdownCtx)
 	if err != nil {
 		slog.Error("failed to shutdown server: %v", err)
 		os.Exit(1)
