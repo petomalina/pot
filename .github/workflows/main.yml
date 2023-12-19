@@ -3,6 +3,7 @@ name: Build and Release to Docker Hub
 on:
   push:
     branches: [ main ]
+    tags: [ v* ]
 
 env:
   IMAGE: petomalinahub/pot
@@ -32,6 +33,8 @@ jobs:
       - name: Build and Publish
         run: |-
           pack config default-builder gcr.io/buildpacks/builder:v1
-          pack build --builder=gcr.io/buildpacks/builder --env="GOOGLE_BUILDABLE=./cmd/pot" --env="GOOGLE_RUNTIME=go" --publish  ${{ env.IMAGE }}:${{ github.sha }}
-  
-  
+          pack build --builder=gcr.io/buildpacks/builder \
+            --env="GOOGLE_BUILDABLE=./cmd/pot" \
+            --env="GOOGLE_RUNTIME=go" \
+            --publish=${{ env.IMAGE }}:${{ github.sha }} \
+            --tag ${{ env.IMAGE }}:${{ github.ref }}
