@@ -11,6 +11,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 func (s *Server) Routes() http.Handler {
@@ -68,6 +70,14 @@ func (s *Server) routeGetFunc(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(content); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+
+	if s.MetricsOptions.Enabled {
+		if strings.HasSuffix(relPath, ":list") {
+			s.MetricsOptions.PotLists.Add(r.Context(), 1, metric.WithAttributes(attribute.String("path", relPath)))
+		} else {
+			s.MetricsOptions.PotReads.Add(r.Context(), 1, metric.WithAttributes(attribute.String("path", relPath)))
+		}
+	}
 }
 
 func (s *Server) routePostFunc(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +119,7 @@ func (s *Server) routePostFunc(w http.ResponseWriter, r *http.Request) {
 		// norewrite violation returns
 		if errors.Is(err, ErrNoRewriteViolated) {
 			w.WriteHeader(http.StatusLocked)
+			return
 		} else {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -124,6 +135,11 @@ func (s *Server) routePostFunc(w http.ResponseWriter, r *http.Request) {
 	// encode the content to the response
 	if err := json.NewEncoder(w).Encode(content); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.MetricsOptions.Enabled {
+		s.MetricsOptions.PotWrites.Add(r.Context(), 1, metric.WithAttributes(attribute.String("path", relPath)))
 	}
 }
 
@@ -142,6 +158,10 @@ func (s *Server) routeDeleteFunc(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if s.MetricsOptions.Enabled {
+		s.MetricsOptions.PotRemoves.Add(r.Context(), 1, metric.WithAttributes(attribute.String("path", relPath)))
 	}
 }
 
