@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"os/signal"
 	"time"
@@ -31,6 +33,8 @@ func main() {
 	client := pot.NewClient[Leader]("http://localhost:8080")
 
 	primary := false
+	// clients will release their lease after 5 turns
+	turns := 0
 
 	// cleanup if the server goes down and we are the primary
 	defer func() {
@@ -60,11 +64,29 @@ func main() {
 			slog.Info("became primary", slog.String("id", id), slog.Int64("generation", res.Generation))
 		}
 
+		if primary {
+			turns++
+			if turns >= 5 {
+				slog.Info("releasing primary")
+				err := client.Remove("test/election", "leader")
+				if err != nil {
+					slog.Error("failed to release", slog.String("err", err.Error()))
+				}
+				primary = false
+				turns = 0
+			}
+		}
+
+		_, err = client.Get(fmt.Sprintf("test/election/%s", id))
+		if err != nil {
+			slog.Error("failed to get", slog.String("err", err.Error()))
+		}
+
 		select {
 		case <-ctx.Done():
 			slog.Info("shutting down")
 			return
-		case <-time.After(time.Second * 5):
+		case <-time.After(time.Duration(rand.Intn(4)+2) * time.Second):
 		}
 	}
 }
