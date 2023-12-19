@@ -61,6 +61,18 @@ type ServerMetricsOptions struct {
 
 	// AvgLocalLockDuration is the average duration of the local lock
 	AvgLocalLockDuration metric.Float64Histogram
+
+	// PotWrites is the number of writes to the pot
+	PotWrites metric.Int64Counter
+
+	// PotReads is the number of reads from the pot
+	PotReads metric.Int64Counter
+
+	// PotLists is the number of lists from the pot
+	PotLists metric.Int64Counter
+
+	// PotRemoves is the number of removes from the pot
+	PotRemoves metric.Int64Counter
 }
 
 type ServerTracingOptions struct {
@@ -96,6 +108,58 @@ func NewServer(ctx context.Context, bucketName string, opts ...Option) (*Server,
 			return nil, err
 		}
 		c.MetricsOptions.AvgLocalLockDuration = avgLocalLockDuration
+
+		potWrites, err := otel.
+			GetMeterProvider().
+			Meter("pot-server").
+			Int64Counter(
+				"pot_writes",
+				metric.WithDescription("pot_writes is the number of writes to the pot"),
+				metric.WithUnit("{call}"),
+			)
+		if err != nil {
+			return nil, err
+		}
+		c.MetricsOptions.PotWrites = potWrites
+
+		potReads, err := otel.
+			GetMeterProvider().
+			Meter("pot-server").
+			Int64Counter(
+				"pot_reads",
+				metric.WithDescription("pot_reads is the number of reads from the pot"),
+				metric.WithUnit("{call}"),
+			)
+		if err != nil {
+			return nil, err
+		}
+		c.MetricsOptions.PotReads = potReads
+
+		potLists, err := otel.
+			GetMeterProvider().
+			Meter("pot-server").
+			Int64Counter(
+				"pot_lists",
+				metric.WithDescription("pot_lists is the number of lists from the pot"),
+				metric.WithUnit("{call}"),
+			)
+		if err != nil {
+			return nil, err
+		}
+		c.MetricsOptions.PotLists = potLists
+
+		potRemoves, err := otel.
+			GetMeterProvider().
+			Meter("pot-server").
+			Int64Counter(
+				"pot_removes",
+				metric.WithDescription("pot_removes is the number of removes from the pot"),
+				metric.WithUnit("{call}"),
+			)
+		if err != nil {
+			return nil, err
+		}
+		c.MetricsOptions.PotRemoves = potRemoves
 	}
 
 	return c, nil

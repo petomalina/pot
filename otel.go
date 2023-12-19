@@ -21,8 +21,8 @@ func OTELResource() (*resource.Resource, error) {
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceNameKey.String("github.com/petomalina/pot"),
-			semconv.ServiceVersionKey.String("2.0.0"),
+			semconv.ServiceName("github.com/petomalina/pot"),
+			semconv.ServiceVersion("2.0.0"),
 		),
 	)
 }
