@@ -37,14 +37,6 @@ func (s *Server) Routes() http.Handler {
 		PathPrefix("/").
 		HandlerFunc(s.routeDeleteFunc)
 
-	mux.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.zip != "" && (r.Method == http.MethodPost || r.Method == http.MethodDelete) {
-			if err := s.Zip(r.Context(), s.zip); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-		}
-	})
-
 	return mux
 }
 
