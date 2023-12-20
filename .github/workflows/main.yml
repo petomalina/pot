@@ -36,5 +36,5 @@ jobs:
           pack build --builder=gcr.io/buildpacks/builder \
             --env="GOOGLE_BUILDABLE=./cmd/pot" \
             --env="GOOGLE_RUNTIME=go" \
-            --tag=${{ env.IMAGE }}:${{ github.ref.name }} \
+            --tag=${{ env.IMAGE }}:${{ github.ref_name }} \
             --publish ${{ env.IMAGE }}:${{ github.sha }}
