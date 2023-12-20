@@ -28,6 +28,11 @@ var (
 	ErrNoRewriteViolated = errors.New("no-rewrite rule was violated")
 )
 
+// IsNoRewriteViolated checks whether the given error is the no-rewrite rule violation error.
+func IsNoRewriteViolated(err error) bool {
+	return errors.Is(err, ErrNoRewriteViolated)
+}
+
 type Server struct {
 	bucket *storage.BucketHandle
 

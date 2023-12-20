@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -52,7 +51,7 @@ func main() {
 		slog.Info("attempting election", slog.String("id", id), slog.Bool("primary", primary))
 		res, err := client.Create("test/election", []Leader{{ID: id}}, pot.WithNoRewrite(time.Second*10))
 		if err != nil {
-			if errors.Is(err, pot.ErrNoRewriteViolated) {
+			if pot.IsNoRewriteViolated(err) {
 				primary = false
 			} else {
 				slog.Error("failed", slog.String("err", err.Error()))
