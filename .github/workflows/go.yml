@@ -32,7 +32,7 @@ jobs:
 
     - name: Test
       run: |
-        ./main -bucket petomalina-pot-tests -distributed-lock &
+        ./main -b petomalina-pot-tests --distributed-lock &
         sleep 3 &&
         go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
 
