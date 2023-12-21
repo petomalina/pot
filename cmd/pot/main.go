@@ -2,31 +2,30 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/petomalina/pot"
 )
 
-var (
-	logLevelFlag        = flag.String("log-level", "info", "debug | info | warn | error")
-	bucketNameFlag      = flag.String("bucket", "", "bucket name")
-	zipFlag             = flag.String("zip", "", "zip is the path where the zip file is stored")
-	distributedLockFlag = flag.Bool("distributed-lock", false, "distributed-lock enables distributed locking of the pot")
-
-	tracing = flag.Bool("tracing", false, "tracing enables tracing")
-	metrics = flag.Bool("metrics", false, "metrics enables metrics")
-)
+var cli struct {
+	LogLevel        string `help:"debug | info | warn | error" env:"LOG_LEVEL" default:"info"`
+	Bucket          string `help:"bucket name" env:"BUCKET" required:"true" short:"b"`
+	Zip             string `help:"zip is the path where the zip file is stored" env:"ZIP"`
+	DistributedLock bool   `help:"distributed-lock enables distributed locking of the pot" env:"DISTRIBUTED_LOCK"`
+	Tracing         bool   `help:"tracing enables tracing" env:"TRACING"`
+	Metrics         bool   `help:"metrics enables metrics" env:"METRICS"`
+}
 
 func main() {
-	flag.Parse()
+	_ = kong.Parse(&cli)
 
 	loglevel := new(slog.Level)
-	err := loglevel.UnmarshalText([]byte(*logLevelFlag))
+	err := loglevel.UnmarshalText([]byte(cli.LogLevel))
 	if err != nil {
 		slog.Error("failed to parse log level: %v", err)
 		os.Exit(1)
@@ -34,11 +33,6 @@ func main() {
 
 	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: *loglevel})
 	slog.SetDefault(slog.New(h))
-
-	if *bucketNameFlag == "" {
-		slog.Error("-bucket=<name> is required, but missing")
-		os.Exit(1)
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -56,27 +50,27 @@ func main() {
 	}()
 
 	opts := []pot.Option{}
-	if *distributedLockFlag {
+	if cli.DistributedLock {
 		slog.Debug("distributed lock enabled")
 		opts = append(opts, pot.WithDistributedLock())
 	}
 
-	if *zipFlag != "" {
+	if cli.Zip != "" {
 		slog.Info("zip file enabled")
-		opts = append(opts, pot.WithZip(*zipFlag))
+		opts = append(opts, pot.WithZip(cli.Zip))
 	}
 
-	if *metrics {
+	if cli.Metrics {
 		slog.Info("metrics enabled")
 		opts = append(opts, pot.WithMetrics())
 	}
 
-	if *tracing {
+	if cli.Tracing {
 		slog.Info("tracing enabled")
 		opts = append(opts, pot.WithTracing())
 	}
 
-	server, err := pot.NewServer(ctx, *bucketNameFlag, opts...)
+	server, err := pot.NewServer(ctx, cli.Bucket, opts...)
 	if err != nil {
 		slog.Error("failed to create pot client: %v", err)
 		os.Exit(1)
