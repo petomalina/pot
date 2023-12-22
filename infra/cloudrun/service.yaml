@@ -1,0 +1,44 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: pot-service
+  labels:
+    cloud.googleapis.com/location: europe-west1
+spec:
+  template:
+    metadata:
+      labels:
+        app: pot
+    spec:
+      serviceAccountName: $SERVICE_ACCOUNT_EMAIL
+      containers:
+      - name: pot-server
+        image: petomalinahub/pot:v2.1
+        ports:
+        - containerPort: 8080
+        env:
+        - name: LOG_LEVEL
+          value: "info"
+        - name: BUCKET
+          value: "petomalina-pot-tests"
+        - name: ZIP
+          value: ""
+        - name: DISTRIBUTED_LOCK
+          value: "false"
+        - name: TRACING
+          value: "false"
+        - name: METRICS
+          value: "true"
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:0.91.0
+        volumeMounts:
+        - name: otel-config
+          mountPath: /etc/otelcol-contrib/config.yaml
+          subPath: config.yaml
+      volumes:
+      - name: otel-config
+        secret:
+          secretName: otel-config
+          items:
+          - key: latest
+            path: .
